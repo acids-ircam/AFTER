@@ -1,0 +1,2 @@
+recursive-include after/diffusion/config *.gin
+recursive-include after/autoencoder/config *.gin

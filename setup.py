@@ -19,7 +19,7 @@ setuptools.setup(
     description="AFTER: Audio Features Transfer and Exploration in Real-time",
     long_description=readme,
     long_description_content_type="text/markdown",
-    packages=setuptools.find_packages(exclude=["after_scripts", "after_scripts.*"]),
+    packages=setuptools.find_packages(exclude=["after_scripts", "after_scripts.*"]) + ['after/diffusion/configs', 'after/autoencoder/configs'],
     package_data={
         'after/diffusion/configs': ['*.gin'],
         'after/autoencoder/configs': ['*.gin'],
