@@ -7,7 +7,6 @@ import gin
 import math
 import torch.nn.functional as F
 from typing import Tuple
-import numpy as np
 
 
 class Conv1dSamePaddingReflect(nn.Module):
@@ -197,7 +196,18 @@ class Res2NetBlock(nn.Module):
         Returns:
             torch.Tensor: Output tensor.
         """
+
         y = []
+
+        # for i, x_i in enumerate(torch.chunk(x, self.scale, dim=1)):
+        #     if i == 0:
+        #         y_i = x_i
+        #     elif i == 1:
+        #         y_i = self.blocks[i - 1](x_i)
+        #     else:
+        #         y_i = self.blocks[i - 1](x_i + y_i)
+        #     y.append(y_i)
+        # y = torch.cat(y, dim=1)
 
         chunks = torch.chunk(x, self.scale, dim=1)
         y_i = chunks[0]
@@ -211,6 +221,7 @@ class Res2NetBlock(nn.Module):
                 y_i = block(x_i + y_i)
             y.append(y_i)
         y = torch.cat(y, dim=1)
+
         return y
 
 
@@ -322,14 +333,13 @@ class SERes2NetBlock(nn.Module):
         )
         self.se_block = SEBlock(out_channels, se_channels, out_channels)
 
+        self.shortcut = nn.Identity()
         if in_channels != out_channels:
             self.shortcut = Conv1dSamePaddingReflect(
                 in_channels=in_channels,
                 out_channels=out_channels,
                 kernel_size=1,
             )
-        else:
-            self.shortcut = nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -342,7 +352,6 @@ class SERes2NetBlock(nn.Module):
             torch.Tensor: Output tensor.
         """
         residual = x
-        # if self.shortcut:
 
         residual = self.shortcut(x)
 
@@ -468,18 +477,19 @@ class ECAPATDNN(nn.Module):
 
     def __init__(self,
                  in_size: int,
+                 out_dim: int,
                  channels,
-                 kernel_size,
+                 kernel_sizes,
+                 dilations,
+                 groups,
                  res2net_scale,
                  se_channels,
                  attention_channels,
                  global_context,
                  pooling,
                  use_tanh,
-                 spherical_normalization,
-                 ac_regularisation,
-                 dilation=1,
-                 groups=1):
+                 spherical_normalisation,
+                 regularisation="none"):
         """
         Initialize an ECAPA-TDNN encoder.
 
@@ -489,22 +499,22 @@ class ECAPATDNN(nn.Module):
             None
         """
         super().__init__()
-        self.out_dim = channels.pop(-1)
-        last_channel = int(np.sum([c for c in channels[1:]]))
-        self.channels = channels + [last_channel]
-
-        self.kernel_sizes = [kernel_size] * len(self.channels)
-        self.dilations = [dilation] * len(self.channels)
-        self.groups = [groups] * len(self.channels)
+        self.channels = channels
+        self.kernel_sizes = kernel_sizes
+        self.dilations = dilations
+        self.groups = groups
         self.res2net_scale = res2net_scale
         self.se_channels = se_channels
         self.attention_channels = attention_channels
         self.global_context = global_context
         self.pooling = pooling
-
+        self.out_size = out_dim
         self.use_tanh = use_tanh
-        self.spherical_normalisation = spherical_normalization
-        self.ac_regularisation = ac_regularisation
+        self.spherical_normalisation = spherical_normalisation
+        self.regularisation = regularisation
+
+        if self.regularisation == "vae":
+            self.out_size = 2 * out_dim
 
         assert len(self.channels) == len(self.kernel_sizes)
         assert len(self.channels) == len(self.dilations)
@@ -551,13 +561,11 @@ class ECAPATDNN(nn.Module):
                             2 if self.pooling else self.channels[-1])
 
         self.fc = Conv1dSamePaddingReflect(in_channels=last_in_channels,
-                                           out_channels=self.out_dim,
+                                           out_channels=self.out_size,
                                            kernel_size=1)
 
     @torch.jit.ignore
-    def forward(self,
-                X: torch.Tensor,
-                return_full: bool = False) -> torch.Tensor:
+    def forward(self, X: torch.Tensor, return_full=False) -> torch.Tensor:
         """
         Forward pass.
 
@@ -598,18 +606,23 @@ class ECAPATDNN(nn.Module):
         if self.spherical_normalisation:
             Z = Z / torch.norm(Z, dim=-1, keepdim=True)
 
-        if self.ac_regularisation:
+        if self.regularisation == "vae":
+            mean, scale = Z.chunk(2, 1)
+            std = nn.functional.softplus(scale) + 1e-4
+            var = std * std
+            logvar = torch.log(var)
+
+            Z = torch.randn_like(mean) * std + mean
+            kl = (mean * mean + var - logvar - 1).sum(1).mean()
+
+        elif self.regularisation == "ac":
             kl = (torch.nn.functional.relu((abs(Z) - 1))).mean()
             mean = Z
-        else:
-            mean = Z
-            kl = torch.tensor(0.0).to(Z.device)
 
         if return_full:
             return Z, mean, kl
         return Z
 
-    @torch.jit.export
     def forward_stream(self, X: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
@@ -650,29 +663,4 @@ class ECAPATDNN(nn.Module):
 
         if self.spherical_normalisation:
             Z = Z / torch.norm(Z, dim=-1, keepdim=True)
-
         return Z
-
-
-if __name__ == "__main__":
-    # Example usage
-    model = ECAPATDNN(
-        in_size=80,
-        channels=[256, 512, 512, 1024, 2],
-        kernel_size=3,
-        res2net_scale=8,
-        se_channels=128,
-        attention_channels=128,
-        global_context=True,
-        pooling=True,
-        use_tanh=True,
-        spherical_normalisation=False,
-        ac_regularisation=True,
-    )
-
-    # Dummy input
-    x = torch.randn(16, 80, 100)  # (batch_size, num_features, sequence_length)
-    output = model(x, return_full=True)
-
-    ts = torch.jit.script(model)
-    print(output)  # Expected output shape
