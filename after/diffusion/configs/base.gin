@@ -12,7 +12,7 @@ ZS_CHANNELS = 12
 ZT_CHANNELS = 2
 SR = 44100
 STRUCTURE_TYPE = "audio"
-PHASE_1_STEP = 200000
+PHASE_1_STEP = 50000
 MAX_STEPS = 600000
 
 LOCAL_ATTENTION_SIZE = 8
@@ -62,7 +62,7 @@ classifier/diffusion.networks.Encoder1D:
     average_out = True
     upscale_out = False
 
-diffusion.networks.transformerv2.Denoiserv2:
+diffusion.networks.transformerv2.DenoiserV2:
     n_channels = %IN_SIZE
     seq_len = %N_SIGNAL   
     embed_dim = 512
@@ -74,13 +74,13 @@ diffusion.networks.transformerv2.Denoiserv2:
     causal = True
     tcond_dim = %ZS_CHANNELS
     pos_emb_type = "rotary"
-    local_attention_size = %LOCAL_ATTENTION_SIZE,
+    local_attention_size = %LOCAL_ATTENTION_SIZE
     attention_chunk_size = %ATTENTION_CHUNK_SIZE
 
 
 diffusion.model.Base:
     sr = %SR
-    net= @diffusion.networks.transformer.Denoiser()
+    net= @diffusion.networks.transformerv2.DenoiserV2()
     encoder = @encoder/diffusion.networks.ecapa_encoder.ECAPATDNN()
     encoder_time = @encoder_time/diffusion.networks.Encoder1D()    
     classifier = @classifier/diffusion.networks.Encoder1D()
@@ -103,8 +103,10 @@ diffusion.model.Base.fit:
     adversarial_loss = "cosine"
     adversarial_weight = 0.1
 
+    drop_targets = [1]
+
     # Noise augmentation to smooth the latent space
-    zsem_noise_aug = 0.05
+    zsem_noise_aug = 0.03
     time_cond_noise_aug = 0.02
 
     ## Encoder regularisation

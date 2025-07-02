@@ -21,24 +21,20 @@ class Base(nn.Module):
                  net,
                  sr,
                  encoder=None,
-                 post_encoder=None,
                  encoder_time=None,
                  classifier=None,
                  emb_model=None,
                  time_transform=None,
-                 vector_quantizer=None,
                  drop_value=-4.,
                  drop_rate=0.2,
-                 device="cpu", **kwargs):
+                 device="cpu",
+                 **kwargs):
         super().__init__()
 
         self.net = net
         self.encoder = encoder
         self.encoder_time = encoder_time
-        self.post_encoder = post_encoder
         self.classifier = classifier
-
-        self.vector_quantizer = vector_quantizer
 
         self.time_transform = time_transform
         self.sr = sr
@@ -123,7 +119,6 @@ class Base(nn.Module):
 
         self.opt = AdamW(params, lr=lr, betas=(0.9, 0.999))
         self.step = 0
-        self.estimate_std(dataloader)
 
     @gin.configurable
     @torch.no_grad()
@@ -328,16 +323,11 @@ class Base(nn.Module):
                 time_cond = time_cond + time_cond_noise_aug * torch.randn_like(
                     time_cond)
 
-                time_cond, _ = self.vector_quantizer(
-                    time_cond) if self.vector_quantizer is not None else (
-                        time_cond, None)
-
                 if self.drop_rate > 0:
                     if self.step < timbre_warmup:
-                        drop_targets = [0]
+                        drop_targets = []
                     else:
-                        drop_targets = [0, 1
-                                        ] if drop_targets == "both" else [1]
+                        drop_targets = drop_targets
 
                     cond_drop, time_cond_drop = self.cfgdrop(
                         [cond, time_cond],
@@ -465,7 +455,6 @@ class Base(nn.Module):
 
                 if self.step % steps_valid == 20 and validloader is not None:
                     with torch.no_grad() and self.ema.average_parameters():
-
                         ## VALIDATION
 
                         lossval = {}
@@ -710,25 +699,27 @@ class RectifiedFlow(Base):
         return loss, interpolant, t
 
     def model_forward(self,
-                      x,
-                      time,
-                      cond,
-                      time_cond,
-                      guidance_cond_factor,
-                      guidance_joint_factor,
-                      total_guidance,
-                      cache_index=0):
+                      x: torch.Tensor,
+                      time: torch.Tensor,
+                      cond: torch.Tensor,
+                      time_cond: torch.Tensor,
+                      guidance_timbre: float,
+                      guidance_structure: float,
+                      cache_index: int = 0) -> torch.Tensor:
 
-        full_time = time.repeat(4, 1, 1)
-        full_x = x.repeat(4, 1, 1)
+        full_time = time.repeat(3, 1, 1)
+        full_x = x.repeat(3, 1, 1)
 
         full_cond = torch.cat([
-            cond, self.drop_value * torch.ones_like(cond),
-            self.drop_value * torch.ones_like(cond), cond
+            cond,
+            self.drop_value * torch.ones_like(cond),
+            self.drop_value * torch.ones_like(cond),
         ])
+
         full_time_cond = torch.cat([
-            time_cond, self.drop_value * torch.ones_like(time_cond), time_cond,
-            self.drop_value * torch.ones_like(time_cond)
+            time_cond,
+            time_cond,
+            self.drop_value * torch.ones_like(time_cond),
         ])
 
         dx = self.net(full_x,
@@ -737,15 +728,15 @@ class RectifiedFlow(Base):
                       time_cond=full_time_cond,
                       cache_index=cache_index)
 
-        dx_full, dx_none, dx_time_cond, dx_cond = torch.chunk(dx, 4, dim=0)
+        dx_full, dx_time_cond, dx_none = torch.chunk(dx, 3, dim=0)
 
-        dx = dx_none + total_guidance * (guidance_joint_factor *
-                                         (dx_full - dx_none) +
-                                         (1 - guidance_joint_factor) *
-                                         (guidance_cond_factor *
-                                          (dx_cond - dx_none) +
-                                          (1 - guidance_cond_factor) *
-                                          (dx_time_cond - dx_none)))
+        total_guidance = 0.5 * (guidance_structure + guidance_timbre)
+
+        guidance_cond_factor = guidance_timbre / (max(guidance_structure, 0.1))
+
+        dx = dx_none + total_guidance * (dx_time_cond + guidance_cond_factor *
+                                         (dx_full - dx_time_cond) - dx_none)
+
         return dx
 
     @torch.no_grad()
@@ -768,4 +759,3 @@ class RectifiedFlow(Base):
                 guidance_joint_factor, total_guidance) * dt
 
         return x
-

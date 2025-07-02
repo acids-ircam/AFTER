@@ -68,7 +68,7 @@ def main(argv):
 
     ######### BUILD MODEL #########
 
-    emb_model = torch.jit.load(FLAGS.emb_model_path)  #.to(device)
+    emb_model = torch.jit.load(FLAGS.emb_model_path).cpu()  #.to(device)
     dummy = torch.randn(1, 1, 4096)  #.to(device)
     z = emb_model.encode(dummy)
     ae_emb_size = z.shape[1]

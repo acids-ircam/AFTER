@@ -1,2 +1,2 @@
 from .networks import *
-from .model import RectifiedFlow, EDM
+from .model import RectifiedFlow
