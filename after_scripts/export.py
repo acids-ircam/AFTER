@@ -20,23 +20,33 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("model_path",
                     default="./after_runs/test",
                     help="Name of the experiment folder")
-flags.DEFINE_integer("step", default=0, help="Step number of checkpoint")
+flags.DEFINE_integer("step", default=None, help="Step number of checkpoint")
 flags.DEFINE_string("emb_model_path",
                     default="./pretrained/test.ts",
                     help="Path to encoder model")
 flags.DEFINE_integer("chunk_size", default=8, help="Chunk size")
-flags.DEFINE_integer("max_cache_size",
-                     default=128,
-                     help="Training length (in number of latent samples)")
+flags.DEFINE_bool("latent_project",
+                  default=True,
+                  help="Create latent map embedding plot")
 
 
 def main(argv):
     # Parse model folder
     folder = FLAGS.model_path
-    checkpoint_path = folder + "/checkpoint" + str(FLAGS.step) + "_EMA.pt"
-    config = folder + "/config.gin"
 
-    out_name = os.path.join(folder, folder.split("/")[-1] + ".ts")
+    if FLAGS.step is None:
+        files = os.listdir(folder)
+        files = [f for f in files if f.startswith("checkpoint")]
+        steps = [f.split("_")[-2].replace("checkpoint", "") for f in files]
+        step = max([int(s) for s in steps])
+        checkpoint_file = "checkpoint" + str(step) + "_EMA.pt"
+    else:
+        checkpoint_file = "checkpoint" + str(FLAGS.step) + "_EMA.pt"
+
+    print("Using checkpoint at step : ", checkpoint_file)
+
+    checkpoint_path = os.path.join(folder, checkpoint_file)
+    config = folder + "/config.gin"
 
     # Parse config
     gin.parse_config_file(config)
@@ -44,10 +54,13 @@ def main(argv):
 
     with gin.unlock_config():
         with gin.unlock_config():
+            cache_denoiserv1 = gin.query_parameter("%N_SIGNAL")
             gin.bind_parameter("transformer.Denoiser.max_cache_size",
-                               FLAGS.max_cache_size)
-
-    # Emb model
+                               cache_denoiserv1)
+            cache_denoiserv2 = gin.query_parameter(
+                "%LOCAL_ATTENTION_SIZE") + FLAGS.chunk_size
+            gin.bind_parameter("transformerv2.MHAttention.max_cache_size",
+                               cache_denoiserv2)
 
     # Instantiate model
     blender = RectifiedFlow()
@@ -67,6 +80,37 @@ def main(argv):
     zs_channels = gin.query_parameter("%ZS_CHANNELS")
     ae_latents = gin.query_parameter("%IN_SIZE")
 
+    ### GENERATE EMBEDDING PLOT ###
+    if FLAGS.latent_project:
+        from after.dataset import CombinedDataset
+        from after.diffusion.latent_plot import prepare_training, train_autoencoder, generate_plot
+
+        path_dict = gin.query_parameter("utils.get_datasets.path_dict")
+        dataset = CombinedDataset(path_dict=path_dict, keys=["z", "metadata"])
+
+        embeddings, labels = prepare_training(blender.encoder,
+                                              dataset,
+                                              num_examples=3000)
+        project_model = train_autoencoder(embeddings,
+                                          num_steps=30000,
+                                          batch_size=32,
+                                          lr=1e-3,
+                                          device="cpu")
+
+        compressed_embeddings = project_model.encoder(
+            torch.tensor(embeddings, dtype=torch.float32)).detach().numpy()
+
+        fig, legend_fig = generate_plot(compressed_embeddings,
+                                        labels,
+                                        use_blur=True,
+                                        bins=500,
+                                        sigma=12,
+                                        gamma=0.5,
+                                        brightness_scale=1.)
+        torch.set_grad_enabled(False)
+    else:
+        project_model = None
+
     class Streamer(nn_tilde.Module):
 
         def __init__(self) -> None:
@@ -84,6 +128,8 @@ def main(argv):
             self.ae_latents = ae_latents
             self.emb_model_structure = torch.jit.load(
                 FLAGS.emb_model_path).eval()
+
+            self.project_model = project_model
 
             self.emb_model_timbre = torch.jit.load(FLAGS.emb_model_path).eval()
 
@@ -200,6 +246,38 @@ def main(argv):
                 ],
                 output_labels=[f"(signal) Audio output"],
                 test_buffer_size=self.chunk_size * self.ae_ratio,
+            )
+
+            self.register_method(
+                "latent2map",
+                in_channels=self.zt_channels,
+                in_ratio=1,
+                out_channels=2,
+                out_ratio=1,
+                input_labels=[
+                    f"(signal_{i}) Full Latent"
+                    for i in range(self.zt_channels)
+                ],
+                output_labels=[
+                    f"(signal) 2D Latent 1", f"(signal) 2D Latent 2"
+                ],
+                test_buffer_size=2048,
+            )
+
+            self.register_method(
+                "map2latent",
+                in_channels=2,
+                in_ratio=1,
+                out_channels=self.zt_channels,
+                out_ratio=1,
+                output_labels=[
+                    f"(signal_{i}) Full Latent"
+                    for i in range(self.zt_channels)
+                ],
+                input_labels=[
+                    f"(signal) 2D Latent 1", f"(signal) 2D Latent 2"
+                ],
+                test_buffer_size=2048,
             )
 
         @torch.jit.export
@@ -358,13 +436,41 @@ def main(argv):
             audio = self.decode(z)
             return audio
 
+        @torch.jit.export
+        def map2latent(self, x: torch.Tensor) -> torch.Tensor:
+            tdim = x.shape[-1]
+            mapvec = x.mean(-1)
+            latents = self.project_model.decoder(mapvec)
+            return latents.unsqueeze(-1).repeat((1, 1, tdim))
+
+        @torch.jit.export
+        def latent2map(self, x: torch.Tensor) -> torch.Tensor:
+            tdim = x.shape[-1]
+            latents = x.mean(-1)
+            map = self.project_model.encoder(latents)
+            return map.unsqueeze(-1).repeat((1, 1, tdim))
+
     ####
 
     streamer = Streamer()
 
-    dummmy = torch.randn(1, zs_channels + zt_channels, 128)
+    dummmy = torch.randn(1, zs_channels + zt_channels, FLAGS.chunk_size)
     out = streamer.diffuse(dummmy)
+    out_name = os.path.join(folder,
+                            "after.audio." + folder.split("/")[-1] + ".ts")
+
     streamer.export_to_ts(out_name)
+
+    out_name_plot = os.path.join(
+        folder, "after.audio." + folder.split("/")[-1] + ".png")
+
+    if project_model is not None:
+        fig.savefig(out_name_plot,
+                    dpi=300,
+                    bbox_inches='tight',
+                    pad_inches=0.1,
+                    facecolor=fig.get_facecolor(),
+                    transparent=False)
 
     print("Bravo - Export successful")
 

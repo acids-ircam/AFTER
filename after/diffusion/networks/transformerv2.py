@@ -114,6 +114,7 @@ class CacheModule(nn.Module):
         self.v_cache = v
 
 
+@gin.configurable
 class MHAttention(nn.Module):
 
     def __init__(
@@ -213,6 +214,9 @@ class MHAttention(nn.Module):
             attn_mask = attn_mask[-q.shape[2]:]
             attn_mask = attn_mask.masked_fill(attn_mask == 1,
                                               float('-inf')).to(k)
+
+            # print(attn_mask[-1])
+
         else:
             attn_mask = None
 
@@ -517,7 +521,12 @@ class DenoiserV2(nn.Module):
                 time_cond: Optional[torch.Tensor] = None,
                 cache_index: int = 0) -> torch.Tensor:
 
+        # Fix for retro-compatibility of export code
+        if len(time.shape) > 1:
+            time = time[..., 0]
+
         time = time.reshape(-1)
+
         noise_level = self.fourier_feats(time)
 
         if cond is not None:

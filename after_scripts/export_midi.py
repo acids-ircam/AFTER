@@ -10,6 +10,7 @@ torch.set_grad_enabled(False)
 
 import gin
 import cached_conv as cc
+import numpy as np
 from absl import flags, app
 
 cc.use_cached_conv(True)
@@ -20,32 +21,49 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("model_path",
                     default="./after_runs/test",
                     help="Name of the experiment folder")
-flags.DEFINE_integer("step", default=0, help="Step number of checkpoint")
+flags.DEFINE_integer("step", default=None, help="Step number of checkpoint")
 flags.DEFINE_string("emb_model_path",
                     default="./pretrained/test.ts",
                     help="Path to audio codec")
 flags.DEFINE_integer("chunk_size", default=4, help="Chunk size")
 flags.DEFINE_integer("max_cache_size", default=128, help="Max cache size")
-flags.DEFINE_integer("n_poly", default=4, help="Number of polyphonic voices")
+flags.DEFINE_integer("n_poly", default=8, help="Number of polyphonic voices")
+flags.DEFINE_integer("train_latent_map",
+                     default=False,
+                     help="Train a 2D latent map for max4Live Device")
 
 
 def main(argv):
     # Parse model folder
     folder = FLAGS.model_path
-    checkpoint_path = folder + "/checkpoint" + str(FLAGS.step) + "_EMA.pt"
+
+    if FLAGS.step is None:
+        files = os.listdir(folder)
+        files = [f for f in files if f.startswith("checkpoint")]
+        steps = [f.split("_")[-2].replace("checkpoint", "") for f in files]
+        step = max([int(s) for s in steps])
+        checkpoint_file = "checkpoint" + str(step) + "_EMA.pt"
+    else:
+        checkpoint_file = "checkpoint" + str(FLAGS.step) + "_EMA.pt"
+
+    print("Using checkpoint at step : ", checkpoint_file)
+
+    checkpoint_path = os.path.join(folder, checkpoint_file)
     config = folder + "/config.gin"
 
-    out_name = os.path.join(folder, "after.midi." + folder.split("/")[-1] + ".ts")
+    out_name = os.path.join(folder,
+                            "after.midi." + folder.split("/")[-1] + ".ts")
     # Parse config
     gin.parse_config_file(config)
     SR = gin.query_parameter("%SR")
 
     with gin.unlock_config():
-        with gin.unlock_config():
+        try:
+            gin.bind_parameter("transformerv2.MHAttention.max_cache_size",
+                               gin.query_parameter("%LOCAL_ATTENTION_SIZE"))
+        except:
             gin.bind_parameter("transformer.Denoiser.max_cache_size",
-                               FLAGS.max_cache_size)
-
-    # Emb model
+                               gin.query_parameter("%N_SIGNAL"))
 
     # Instantiate model
     blender = RectifiedFlow()
@@ -64,13 +82,6 @@ def main(argv):
     zt_channels = gin.query_parameter("%ZT_CHANNELS")
     ae_latents = gin.query_parameter("%IN_SIZE")
 
-    ## Trace the unet
-    #x = torch.ones(1, ae_latents, n_signal)
-    #time_cond = torch.randn(1, zs_channels, n_signal)
-    #cond = torch.randn(1, zt_channels)
-    #t = torch.ones(1, n_signal)
-    #net = torch.jit.trace(blender.net, (x, t, cond, time_cond))
-
     class Streamer(nn_tilde.Module):
 
         def __init__(self) -> None:
@@ -86,8 +97,7 @@ def main(argv):
             self.n_poly = FLAGS.n_poly
             self.zt_channels = zt_channels
             self.ae_latents = ae_latents
-            self.emb_model_timbre = torch.jit.load(
-                FLAGS.emb_model_path).eval()
+            self.emb_model_timbre = torch.jit.load(FLAGS.emb_model_path).eval()
 
             self.drop_value = blender.drop_value
 
@@ -315,7 +325,6 @@ def main(argv):
             notes = x[:, :2 * self.n_poly]
             time_cond = torch.zeros((1, 128, x.shape[-1]))
 
-
             for i in range(self.n_poly):
                 for j in range(x.shape[-1]):
                     if notes[0, 2 * i + 1, j] > 0:
@@ -324,6 +333,7 @@ def main(argv):
 
             # Generate
             x = torch.randn(n, self.ae_latents, x.shape[-1])
+
             x = self.sample(x[:1], time_cond=time_cond[:1], cond=zsem[:1])
 
             if n > 1:
@@ -341,24 +351,9 @@ def main(argv):
             audio = self.decode(z)
             return audio
 
-        @torch.jit.export
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            structure = x[:, :-1]
-            x_timbre = x[:, -1:]
-            timbre = self.timbre(x_timbre)
-
-            structure = torch.nn.functional.interpolate(structure,
-                                                        size=timbre.shape[-1],
-                                                        mode="nearest")
-
-            x = torch.cat((structure, timbre), 1)
-            z = self.diffuse(x)
-            audio = self.decode(z)
-            return audio
-
     ####
     streamer = Streamer()
-    dummmy = torch.randn(1, FLAGS.n_poly * 2 + zt_channels, 128)
+    dummmy = torch.randn(1, FLAGS.n_poly * 2 + zt_channels, FLAGS.chunk_size)
     out = streamer.diffuse(dummmy)
 
     streamer.export_to_ts(out_name)

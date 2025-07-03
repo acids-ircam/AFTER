@@ -732,7 +732,8 @@ class RectifiedFlow(Base):
 
         total_guidance = 0.5 * (guidance_structure + guidance_timbre)
 
-        guidance_cond_factor = guidance_timbre / (max(guidance_structure, 0.1))
+        guidance_cond_factor = guidance_timbre / (max(guidance_structure,
+                                                      0.01))
 
         dx = dx_none + total_guidance * (dx_time_cond + guidance_cond_factor *
                                          (dx_full - dx_time_cond) - dx_none)
@@ -745,9 +746,8 @@ class RectifiedFlow(Base):
                cond,
                time_cond,
                nb_steps,
-               guidance_cond_factor=0.,
-               guidance_joint_factor=1.,
-               total_guidance=1.):
+               guidance_timbre=1.,
+               guidance_structure=1.):
         dt = 1 / nb_steps
         t_values = torch.linspace(0, 1, nb_steps + 1).to(self.device)[:-1]
         x = x0.to(self.device)
@@ -755,7 +755,11 @@ class RectifiedFlow(Base):
         for t in t_values:
             t = t.reshape(1, 1, 1).repeat(x.shape[0], 1, 1)
             x = x + self.model_forward(
-                x, t, cond, time_cond, guidance_cond_factor,
-                guidance_joint_factor, total_guidance) * dt
+                x=x,
+                time=t,
+                cond=cond,
+                time_cond=time_cond,
+                guidance_timbre=guidance_timbre,
+                guidance_structure=guidance_structure) * dt
 
         return x

@@ -1,6 +1,7 @@
 import torch
 import gin
 import numpy as np
+from after.dataset import CombinedDataset
 
 
 def crop(arrays, length, idxs):
@@ -12,6 +13,32 @@ def crop(arrays, length, idxs):
 
 def normalize(array):
     return (array - array.min()) / (array.max() - array.min() + 1e-6)
+
+
+@gin.configurable
+def get_datasets(path_dict, data_keys, freqs, use_cache, max_samples):
+
+    dataset = CombinedDataset(
+        path_dict=path_dict,
+        keys=data_keys,
+        freqs="estimate" if freqs is None else freqs,
+        config="train",
+        init_cache=use_cache,
+        num_samples=max_samples,
+    )
+
+    train_sampler = dataset.get_sampler()
+
+    valset = CombinedDataset(
+        path_dict=path_dict,
+        config="validation",
+        freqs="estimate" if freqs is None else freqs,
+        keys=data_keys,
+        init_cache=use_cache,
+        num_samples=max_samples,
+    )
+    val_sampler = valset.get_sampler()
+    return dataset, valset, train_sampler, val_sampler
 
 
 @gin.configurable

@@ -7,7 +7,7 @@ import numpy as np
 
 import after
 from after.dataset import SimpleDataset, CombinedDataset
-from after.diffusion.utils import collate_fn
+from after.diffusion.utils import collate_fn, get_datasets
 from tqdm import tqdm
 
 from absl import flags, app
@@ -125,44 +125,31 @@ def main(argv):
     else:
         print("No augmentation keys")
 
-    if len(FLAGS.db_path) > 1:
-        path_dict = {f: {"name": f, "path": f} for f in FLAGS.db_path}
+    path_dict = {f: {"name": f, "path": f} for f in FLAGS.db_path}
 
-        dataset = CombinedDataset(
-            path_dict=path_dict,
-            keys=data_keys,
-            freqs="estimate" if FLAGS.freqs is None else FLAGS.freqs,
-            config="train",
-            init_cache=FLAGS.use_cache,
-            num_samples=FLAGS.max_samples,
-        )
+    with gin.unlock_config():
+        gin.bind_parameter("diffusion.utils.get_datasets.path_dict", path_dict)
+        gin.bind_parameter("diffusion.utils.get_datasets.data_keys", data_keys)
+        gin.bind_parameter("diffusion.utils.get_datasets.freqs", FLAGS.freqs)
+        gin.bind_parameter("diffusion.utils.get_datasets.use_cache",
+                           FLAGS.use_cache)
+        gin.bind_parameter("diffusion.utils.get_datasets.max_samples", FLAGS.max_samples)
 
-        train_sampler = dataset.get_sampler()
+    dataset, valset, train_sampler, val_sampler = get_datasets()
 
-        if FLAGS.use_validation:
-            valset = CombinedDataset(
-                path_dict=path_dict,
-                config="validation",
-                freqs="estimate" if FLAGS.freqs is None else FLAGS.freqs,
-                keys=data_keys,
-                init_cache=FLAGS.use_cache,
-                num_samples=FLAGS.max_samples,
-            )
-            val_sampler = valset.get_sampler()
-
-    else:
-        dataset = SimpleDataset(path=FLAGS.db_path[0],
-                                keys=data_keys,
-                                max_samples=FLAGS.max_samples,
-                                init_cache=FLAGS.use_cache,
-                                split="train")
-        if FLAGS.use_validation:
-            valset = SimpleDataset(path=FLAGS.db_path[0],
-                                   keys=data_keys,
-                                   max_samples=FLAGS.max_samples,
-                                   split="validation",
-                                   init_cache=FLAGS.use_cache)
-        train_sampler, val_sampler = None, None
+    # else:
+    #     dataset = SimpleDataset(path=FLAGS.db_path[0],
+    #                             keys=data_keys,
+    #                             max_samples=FLAGS.max_samples,
+    #                             init_cache=FLAGS.use_cache,
+    #                             split="train")
+    #     if FLAGS.use_validation:
+    #         valset = SimpleDataset(path=FLAGS.db_path[0],
+    #                                keys=data_keys,
+    #                                max_samples=FLAGS.max_samples,
+    #                                split="validation",
+    #                                init_cache=FLAGS.use_cache)
+    #     train_sampler, val_sampler = None, None
 
     train_loader = torch.utils.data.DataLoader(
         dataset,

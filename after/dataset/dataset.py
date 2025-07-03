@@ -241,5 +241,4 @@ class CombinedDataset(torch.utils.data.Dataset):
         dataset_id = self.dataset_ids[idx]
         data = self.datasets[dataset_id][self.all_indexes[idx]]
         data["label"] = dataset_id
-
         return data

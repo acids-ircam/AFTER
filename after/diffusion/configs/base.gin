@@ -9,13 +9,13 @@ IN_SIZE = None
 N_SIGNAL = None
 
 ZS_CHANNELS = 12
-ZT_CHANNELS = 2
+ZT_CHANNELS = 6
 SR = 44100
 STRUCTURE_TYPE = "audio"
-PHASE_1_STEP = 50000
-MAX_STEPS = 600000
+PHASE_1_STEP = 100000
+MAX_STEPS = 2000000
 
-LOCAL_ATTENTION_SIZE = 8
+LOCAL_ATTENTION_SIZE = 32
 ATTENTION_CHUNK_SIZE = 4
 
 # Data
@@ -121,7 +121,7 @@ diffusion.model.Base.fit:
 
     ## Log ## 
     steps_valid = 10000
-    steps_save = 50000
+    steps_save = 25000
     
     use_ema = True
     lr = 1e-4
