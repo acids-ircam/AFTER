@@ -30,6 +30,15 @@ flags.DEFINE_bool("latent_project",
                   help="Create latent map embedding plot")
 
 
+class DummyIdentity(nn.Module):
+    """Dummy identity model for compatibility"""
+
+    def __init__(self):
+        super().__init__()
+        self.encoder = nn.Identity()
+        self.decoder = nn.Identity()
+
+
 def main(argv):
     # Parse model folder
     folder = FLAGS.model_path
@@ -54,13 +63,15 @@ def main(argv):
 
     with gin.unlock_config():
         with gin.unlock_config():
-            cache_denoiserv1 = gin.query_parameter("%N_SIGNAL")
-            gin.bind_parameter("transformer.Denoiser.max_cache_size",
-                               cache_denoiserv1)
-            cache_denoiserv2 = gin.query_parameter(
-                "%LOCAL_ATTENTION_SIZE") + FLAGS.chunk_size
-            gin.bind_parameter("transformerv2.MHAttention.max_cache_size",
-                               cache_denoiserv2)
+            try:
+                cache_denoiserv2 = gin.query_parameter(
+                    "%LOCAL_ATTENTION_SIZE") + FLAGS.chunk_size
+                gin.bind_parameter("transformerv2.MHAttention.max_cache_size",
+                                   cache_denoiserv2)
+            except:
+                cache_denoiserv1 = gin.query_parameter("%N_SIGNAL")
+                gin.bind_parameter("transformer.Denoiser.max_cache_size",
+                                   cache_denoiserv1)
 
     # Instantiate model
     blender = RectifiedFlow()
@@ -91,14 +102,20 @@ def main(argv):
         embeddings, labels = prepare_training(blender.encoder,
                                               dataset,
                                               num_examples=3000)
-        project_model = train_autoencoder(embeddings,
-                                          num_steps=30000,
-                                          batch_size=32,
-                                          lr=1e-3,
-                                          device="cpu")
 
-        compressed_embeddings = project_model.encoder(
-            torch.tensor(embeddings, dtype=torch.float32)).detach().numpy()
+        if zt_channels > 2:
+            project_model = train_autoencoder(embeddings,
+                                              num_steps=50000,
+                                              batch_size=32,
+                                              lr=1e-3,
+                                              device="cpu")
+
+            compressed_embeddings = project_model.encoder(
+                torch.tensor(embeddings,
+                             dtype=torch.float32)).detach().numpy()
+        else:
+            compressed_embeddings = embeddings
+            project_model = DummyIdentity()
 
         fig, legend_fig = generate_plot(compressed_embeddings,
                                         labels,

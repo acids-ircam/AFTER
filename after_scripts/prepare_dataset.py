@@ -182,6 +182,8 @@ def main(dummy):
     # Load BasicPitchPytorch
     if FLAGS.basic_pitch_midi:
         BP = BasicPitchPytorch(sr=FLAGS.sample_rate, device=device)
+    else:
+        BP = None
 
     if FLAGS.beat_track:
         beat_tracker = BeatTrack(sr=FLAGS.sample_rate, device=device)

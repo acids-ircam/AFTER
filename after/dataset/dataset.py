@@ -21,7 +21,6 @@ class SimpleDataset(torch.utils.data.Dataset):
         readonly=True,
     ) -> None:
         super().__init__()
-
         self.num_sequential = num_sequential
         self.max_samples = max_samples
         self.recache_every = recache_every
