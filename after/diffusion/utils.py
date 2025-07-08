@@ -95,9 +95,11 @@ def collate_fn(batch,
             0, x.shape[-1] * ae_ratio / gin.query_parameter("%SR"),
             x.shape[-1])
         pr = [m.get_piano_roll(times=times) for m in midi]
-
-        pr = map(normalize, pr)
+        # print(pr[0].min(), pr[0].max())
+        # exit()
+        # # pr = map(normalize, pr)
         pr = np.stack(list(pr))
+        pr = pr / 127
         pr = torch.from_numpy(pr).float()
         pr = torch.stack([prc[..., i:i + n_signal] for i, prc in zip(i0, pr)])
         time_cond_target = pr

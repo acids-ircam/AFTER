@@ -5,6 +5,8 @@ import torch
 import argparse
 import os
 from after.diffusion import RectifiedFlow
+from after.dataset import CombinedDataset
+from after.diffusion.latent_plot import prepare_training, train_autoencoder, generate_plot
 
 torch.set_grad_enabled(False)
 
@@ -20,14 +22,22 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("model_path",
                     default="./after_runs/test",
                     help="Name of the experiment folder")
-flags.DEFINE_integer("step", default=None, help="Step number of checkpoint")
+flags.DEFINE_integer(
+    "step",
+    default=None,
+    help="Step number of checkpoint - use None to use the last checkpoint")
 flags.DEFINE_string("emb_model_path",
                     default="./pretrained/test.ts",
                     help="Path to encoder model")
-flags.DEFINE_integer("chunk_size", default=8, help="Chunk size")
+flags.DEFINE_integer("chunk_size", default=4, help="Chunk size")
 flags.DEFINE_bool("latent_project",
                   default=True,
                   help="Create latent map embedding plot")
+flags.DEFINE_float(
+    "latent_range",
+    default=1.0,
+    help="Scale the latent space visualisation to [-latent_range, latent_range]"
+)
 
 
 class DummyIdentity(nn.Module):
@@ -92,41 +102,46 @@ def main(argv):
     ae_latents = gin.query_parameter("%IN_SIZE")
 
     ### GENERATE EMBEDDING PLOT ###
+    ### GENERATE EMBEDDING PLOT ###
     if FLAGS.latent_project:
-        from after.dataset import CombinedDataset
-        from after.diffusion.latent_plot import prepare_training, train_autoencoder, generate_plot
 
-        path_dict = gin.query_parameter("utils.get_datasets.path_dict")
-        dataset = CombinedDataset(path_dict=path_dict, keys=["z", "metadata"])
+        try:
+            path_dict = gin.query_parameter("utils.get_datasets.path_dict")
+            dataset = CombinedDataset(path_dict=path_dict,
+                                      keys=["z", "metadata"])
 
-        embeddings, labels = prepare_training(blender.encoder,
-                                              dataset,
-                                              num_examples=3000)
+            embeddings, labels = prepare_training(blender.encoder,
+                                                  dataset,
+                                                  num_examples=3000)
 
-        if zt_channels > 2:
-            project_model = train_autoencoder(embeddings,
-                                              num_steps=50000,
-                                              batch_size=32,
-                                              lr=1e-3,
-                                              device="cpu")
+            embeddings = embeddings / (FLAGS.latent_range)
+            torch.set_grad_enabled(True)
+            if zt_channels > 2:
+                project_model = train_autoencoder(embeddings,
+                                                  num_steps=50000,
+                                                  batch_size=8,
+                                                  lr=1e-3,
+                                                  device="cpu")
 
-            compressed_embeddings = project_model.encoder(
-                torch.tensor(embeddings,
-                             dtype=torch.float32)).detach().numpy()
-        else:
-            compressed_embeddings = embeddings
-            project_model = DummyIdentity()
+                compressed_embeddings = project_model.encoder(
+                    torch.tensor(embeddings,
+                                 dtype=torch.float32)).detach().numpy()
 
-        fig, legend_fig = generate_plot(compressed_embeddings,
-                                        labels,
-                                        use_blur=True,
-                                        bins=500,
-                                        sigma=12,
-                                        gamma=0.5,
-                                        brightness_scale=1.)
-        torch.set_grad_enabled(False)
+            fig, _ = generate_plot(compressed_embeddings,
+                                   labels,
+                                   use_blur=True,
+                                   bins=500,
+                                   sigma=12,
+                                   gamma=0.5,
+                                   brightness_scale=1.)
+            torch.set_grad_enabled(False)
+        except Exception as e:
+            print("Could not load dataset for embedding plot.")
+            print("Error : ", e)
+            print("Us --nolatent_project to disable latent projection.")
+            exit()
     else:
-        project_model = None
+        project_model = DummyIdentity()
 
     class Streamer(nn_tilde.Module):
 
@@ -152,6 +167,8 @@ def main(argv):
 
             self.drop_value = blender.drop_value
 
+            self.latent_range = FLAGS.latent_range
+
             # Get the ae ratio
             dummy = torch.zeros(1, 1, 4 * 4096)
             z = self.emb_model_structure.encode(dummy)
@@ -161,11 +178,9 @@ def main(argv):
             self.zt_buffer = self.n_signal_timbre * self.ae_ratio
 
             ## ATTRIBUTES ##
-            self.register_attribute("nb_steps", 6)
-            self.register_attribute("guidance", 1.)
+            self.register_attribute("nb_steps", 1)
             self.register_attribute("guidance_timbre", 1.)
             self.register_attribute("guidance_structure", 1.)
-            self.register_attribute("learn_zsem", False)
 
             ## BUFFERS ##
             self.register_buffer(
@@ -267,13 +282,14 @@ def main(argv):
 
             self.register_method(
                 "latent2map",
-                in_channels=self.zt_channels,
+                in_channels=2
+                if not FLAGS.latent_project else self.zt_channels,
                 in_ratio=1,
                 out_channels=2,
                 out_ratio=1,
                 input_labels=[
-                    f"(signal_{i}) Full Latent"
-                    for i in range(self.zt_channels)
+                    f"(signal_{i}) Full Latent" for i in range(
+                        2 if not FLAGS.latent_project else self.zt_channels)
                 ],
                 output_labels=[
                     f"(signal) 2D Latent 1", f"(signal) 2D Latent 2"
@@ -285,35 +301,18 @@ def main(argv):
                 "map2latent",
                 in_channels=2,
                 in_ratio=1,
-                out_channels=self.zt_channels,
+                out_channels=2
+                if not FLAGS.latent_project else self.zt_channels,
                 out_ratio=1,
                 output_labels=[
-                    f"(signal_{i}) Full Latent"
-                    for i in range(self.zt_channels)
+                    f"(signal_{i}) Full Latent" for i in range(
+                        2 if not FLAGS.latent_project else self.zt_channels)
                 ],
                 input_labels=[
                     f"(signal) 2D Latent 1", f"(signal) 2D Latent 2"
                 ],
                 test_buffer_size=2048,
             )
-
-        @torch.jit.export
-        def get_learn_zsem(self) -> bool:
-            return self.learn_zsem[0]
-
-        @torch.jit.export
-        def set_learn_zsem(self, learn_zsem: bool) -> int:
-            self.learn_zsem = (learn_zsem, )
-            return 0
-
-        @torch.jit.export
-        def get_guidance(self) -> float:
-            return self.guidance[0]
-
-        @torch.jit.export
-        def set_guidance(self, guidance: float) -> int:
-            self.guidance = (guidance, )
-            return 0
 
         @torch.jit.export
         def get_guidance_timbre(self) -> float:
@@ -412,6 +411,8 @@ def main(argv):
             zsem = self.encoder.forward_stream(
                 self.previous_timbre[:x.shape[0]])
 
+            zsem = zsem / self.latent_range
+
             return zsem.unsqueeze(-1).repeat((1, 1, self.chunk_size))
 
         @torch.jit.export
@@ -425,6 +426,7 @@ def main(argv):
 
             n = x.shape[0]
             zsem = x[:, -self.zt_channels:].mean(-1)
+            zsem = zsem * self.latent_range
             time_cond = x[:, :self.zs_channels]
             x = torch.randn(n, self.ae_latents, x.shape[-1])
             x = self.sample(x[:1], time_cond=time_cond[:1], cond=zsem[:1])
@@ -481,7 +483,7 @@ def main(argv):
     out_name_plot = os.path.join(
         folder, "after.audio." + folder.split("/")[-1] + ".png")
 
-    if project_model is not None:
+    if FLAGS.latent_project:
         fig.savefig(out_name_plot,
                     dpi=300,
                     bbox_inches='tight',

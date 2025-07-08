@@ -22,6 +22,7 @@ class Base(nn.Module):
                  sr,
                  encoder=None,
                  encoder_time=None,
+                 post_encoder=None,
                  classifier=None,
                  emb_model=None,
                  time_transform=None,
@@ -34,6 +35,7 @@ class Base(nn.Module):
         self.net = net
         self.encoder = encoder
         self.encoder_time = encoder_time
+        self.post_encoder = post_encoder
         self.classifier = classifier
 
         self.time_transform = time_transform

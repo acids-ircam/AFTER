@@ -194,6 +194,12 @@ def generate_plot(embeddings,
     # ------------------------------------------------------------------------------
     # 1. Prepare data
     embedding_2d = embeddings
+
+    # minx, maxx, miny, maxy = -latent_range, latent_range, -latent_range, latent_range
+
+    # embedding_2d = np.c_[2 * (embedding_2d[:, 0] - minx) / (maxx - minx) - 1,
+    #                      2 * (embedding_2d[:, 1] - miny) / (maxy - miny) - 1]
+
     background_color = "#bcbcbc"
 
     le = LabelEncoder()
@@ -203,13 +209,14 @@ def generate_plot(embeddings,
     # colors = [base_cmap(i)[:3] for i in range(len(unique_labels))]
 
     base_colors = [
-        # to_rgb('#e67e22'),  # orange
+        #
+        to_rgb('#9b59b6'),  # purple
+        to_rgb('#FBC15E'),  # yellow
         to_rgb('#E24A33'),  #Strong red-orange
         to_rgb('#3498db'),  # blue
-        to_rgb('#FBC15E'),  # yellow
-        to_rgb('#9b59b6'),  # purple
-        # to_rgb('#1abc9c'),  # turquoise
         to_rgb('#2ecc71'),  # green
+        to_rgb('#1abc9c'),  # turquoise
+        to_rgb('#e67e22'),  # orange
     ]
     colors = [base_colors[i][:3] for i in range(len(unique_labels))]
 
