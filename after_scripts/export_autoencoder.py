@@ -9,7 +9,7 @@ import os
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer("step", 1000000, "Step to load the model from")
+flags.DEFINE_integer("step", None, "Step to load the model from")
 flags.DEFINE_string("model_path", None, "Path of the trained model")
 
 
@@ -32,12 +32,15 @@ class AE_notcausal(nn_tilde.Module):
         d = torch.load(
             os.path.join(FLAGS.model_path,
                          "checkpoint" + str(FLAGS.step) + ".pt"))
-        model.load_state_dict(d["model_state"])
+        model.load_state_dict(d["model_state"], strict=False)
 
         self.model = model
 
-        test_array = torch.zeros((3, 1, 4096))
+        test_array = torch.zeros((3, 1, 131072))
         z, _ = self.model.encode(test_array)
+        y = self.model.decode(z)
+
+        assert test_array.shape[-1] == y.shape[-1]
 
         self.comp_ratio = test_array.shape[-1] // z.shape[-1]
         self.n_fade = 4
@@ -147,7 +150,6 @@ class AE_causal(nn_tilde.Module):
         sr = gin.query_parameter("%SR")
 
         config = os.path.join(FLAGS.model_path, "config.gin")
-
         with gin.unlock_config():
             gin.parse_config_files_and_bindings(
                 [config],
@@ -158,12 +160,14 @@ class AE_causal(nn_tilde.Module):
         d = torch.load(
             os.path.join(FLAGS.model_path,
                          "checkpoint" + str(FLAGS.step) + ".pt"))
-        model.load_state_dict(d["model_state"])
+        model.load_state_dict(d["model_state"], strict=False)
 
         self.model = model
 
-        test_array = torch.zeros((3, 1, 4096))
+        test_array = torch.zeros((3, 1, 131072))
         z, _ = self.model.encode(test_array)
+        y = self.model.decode(z)
+        assert test_array.shape[-1] == y.shape[-1]
 
         self.comp_ratio = test_array.shape[-1] // z.shape[-1]
 
@@ -259,16 +263,17 @@ def main(argv):
 
     cc.use_cached_conv(False)
     ae = AE_causal()
-    test_array = torch.zeros((3, 1, ae.comp_ratio * 8))
+    test_array = torch.zeros((3, 1, 131072))
     z = ae.encode(test_array)
     x = ae.decode(z)
     ae.export_to_ts(os.path.join(FLAGS.model_path, "export.ts"))
 
     if is_causal:
+        gin.bind_parameter("SimpleNetsStream.CachedGroupNorm.stream", True)
         cc.use_cached_conv(True)
         ae_stream = AE_causal()
 
-        test_array = torch.zeros((3, 1, ae.comp_ratio * 8))
+        test_array = torch.zeros((3, 1, 131072))
         z = ae_stream.encode(test_array)
         x = ae_stream.decode(z)
 
@@ -277,14 +282,14 @@ def main(argv):
         print("Success !")
 
     else:
+        gin.bind_parameter("SimpleNetsStream.CachedGroupNorm.stream", True)
         cc.use_cached_conv(True)
         ae_encode = AE_notcausal()
-
         cc.use_cached_conv(False)
         ae_stream = AE_notcausal()
         ae_stream.model.encoder = ae_encode.model.encoder
 
-        test_array = torch.zeros((3, 1, ae.comp_ratio * 8))
+        test_array = torch.zeros((3, 1, 131072))
         z = ae_stream.encode(test_array)
         x = ae_stream.decode(z)
 

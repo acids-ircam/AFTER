@@ -235,7 +235,6 @@ class Base(nn.Module):
                 for key, value in state_dict_model.items()
                 if (load_encoders[2] or "net." not in key)
             }
-
             self.load_state_dict(state_dict_model, strict=False)
 
             try:

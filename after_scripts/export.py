@@ -74,8 +74,7 @@ def main(argv):
     with gin.unlock_config():
         with gin.unlock_config():
             try:
-                cache_denoiserv2 = gin.query_parameter(
-                    "%LOCAL_ATTENTION_SIZE") + FLAGS.chunk_size
+                cache_denoiserv2 = gin.query_parameter("%LOCAL_ATTENTION_SIZE")
                 gin.bind_parameter("transformerv2.MHAttention.max_cache_size",
                                    cache_denoiserv2)
             except:

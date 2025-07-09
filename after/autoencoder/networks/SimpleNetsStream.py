@@ -92,6 +92,61 @@ def normalization(module: nn.Module, mode: str = 'weight_norm'):
         raise Exception(f'Normalization mode {mode} not supported')
 
 
+@gin.configurable
+class CachedGroupNorm(nn.Module):
+
+    def __init__(self,
+                 num_groups,
+                 num_channels,
+                 padding="automatic",
+                 stream=False,
+                 **kwargs):
+        super().__init__()
+        self.gn = nn.GroupNorm(num_groups, num_channels, **kwargs)
+        self.padding = padding
+        self.initialized = 0
+        self.stream = stream
+        self.padding_size = 0
+        self.register_buffer('pad', torch.zeros((4, num_channels, 1)))
+
+    @torch.jit.unused
+    @torch.no_grad()
+    def init_cache(self, x: torch.Tensor) -> None:
+        shape = x.shape
+        if len(shape) > 3:
+            b, c, h, t = x.shape
+            if self.padding == "automatic":
+                self.padding_size = t
+            self.register_buffer(
+                'pad',
+                torch.zeros((4, c, h, self.padding_size)).to(x))
+        else:
+            b, c, t = x.shape
+            if self.padding == "automatic":
+                self.padding_size = t
+            self.register_buffer('pad',
+                                 torch.zeros((4, c, self.padding_size)).to(x))
+        print("Initialized CachedGroupNorm with padding of shape",
+              self.pad.shape)
+        self.initialized += 1
+
+    def forward(self, x):
+        if self.stream:
+            in_shape = x.shape[-1]
+            if not self.initialized:
+                self.init_cache(x)
+
+            x = torch.cat([self.pad[:x.shape[0]], x], -1)
+            # x = x[..., -self.padding_size:]
+            self.pad[:x.shape[0]].copy_(x[..., -self.padding_size:])
+
+            x = self.gn.forward(x)
+            return x[..., -in_shape:]
+
+        else:
+            return self.gn.forward(x)
+
+
 class ConvBlock1d(nn.Module):
 
     def __init__(self,
@@ -107,9 +162,10 @@ class ConvBlock1d(nn.Module):
                  cumulative_delay=0):
         super().__init__()
 
-        groupnorm = (nn.GroupNorm(num_groups=min(in_channels, num_groups),
-                                  num_channels=in_channels)
+        groupnorm = (CachedGroupNorm(num_groups=min(in_channels, num_groups),
+                                     num_channels=in_channels)
                      if use_norm else nn.Identity())
+
         activation = activation(dim=in_channels)
         project = normalization(
             Conv1d(
@@ -694,7 +750,9 @@ class ReluBottleneck(nn.Module):
         self.sigma = sigma
         self.reg_loss = SimpleLatentReg(scale=scale)
 
-    def forward(self, x: Tensor, apply_noise: bool = False) -> Tensor:
+    def forward(self,
+                x: Tensor,
+                apply_noise: bool = False) -> Tuple[Tensor, Tensor]:
 
         reg_loss = self.reg_loss(x)
         if apply_noise:

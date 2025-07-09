@@ -194,8 +194,8 @@ class MHAttention(nn.Module):
             k_cache, v_cache = self.get_buffers(cache_index)
             full_k = torch.cat([k_cache[:k.shape[0]], k], dim=2)
             full_v = torch.cat([v_cache[:k.shape[0]], v], dim=2)
-            full_k = full_k[:, :, -self.max_cache_size:]
-            full_v = full_v[:, :, -self.max_cache_size:]
+            # full_k = full_k[:, :, -(self.max_cache_size + :]
+            # full_v = full_v[:, :, -self.max_cache_size:]
 
             self.last_k = k
             self.last_v = v
