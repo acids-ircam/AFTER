@@ -29,9 +29,20 @@ class AE_notcausal(nn_tilde.Module):
             )
 
         model = AutoEncoder()
-        d = torch.load(
-            os.path.join(FLAGS.model_path,
-                         "checkpoint" + str(FLAGS.step) + ".pt"))
+
+        if FLAGS.step is None:
+            files = os.listdir(FLAGS.model_path)
+            files = [f for f in files if f.startswith("checkpoint")]
+            steps = [f.split("_")[-2].replace("checkpoint", "") for f in files]
+            step = max([int(s) for s in steps])
+            checkpoint_file = "checkpoint" + str(step) + ".pt"
+        else:
+            checkpoint_file = "checkpoint" + str(FLAGS.step) + ".pt"
+
+        print("Export using : ", checkpoint_file)
+
+        d = torch.load(os.path.join(FLAGS.model_path, checkpoint_file))
+
         model.load_state_dict(d["model_state"], strict=False)
 
         self.model = model
@@ -157,9 +168,20 @@ class AE_causal(nn_tilde.Module):
             )
 
         model = AutoEncoder()
-        d = torch.load(
-            os.path.join(FLAGS.model_path,
-                         "checkpoint" + str(FLAGS.step) + ".pt"))
+
+        if FLAGS.step is None:
+            files = os.listdir(FLAGS.model_path)
+            files = [f for f in files if f.startswith("checkpoint")]
+            steps = [f.split("_")[-2].replace("checkpoint", "") for f in files]
+            step = max([int(s) for s in steps])
+            checkpoint_file = "checkpoint" + str(step) + ".pt"
+        else:
+            checkpoint_file = "checkpoint" + str(FLAGS.step) + ".pt"
+
+        print("Export using : ", checkpoint_file)
+
+        d = torch.load(os.path.join(FLAGS.model_path, checkpoint_file))
+
         model.load_state_dict(d["model_state"], strict=False)
 
         self.model = model
