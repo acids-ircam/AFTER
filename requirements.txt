@@ -21,4 +21,5 @@ pedalboard
 librosa
 nn_tilde
 rotary_embedding_torch
-audiomentations
+audiomentations<=0.40
+accelerate

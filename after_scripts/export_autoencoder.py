@@ -33,7 +33,7 @@ class AE_notcausal(nn_tilde.Module):
         if FLAGS.step is None:
             files = os.listdir(FLAGS.model_path)
             files = [f for f in files if f.startswith("checkpoint")]
-            steps = [f.split("_")[-2].replace("checkpoint", "") for f in files]
+            steps = [f.replace("checkpoint", "")[:-3] for f in files]
             step = max([int(s) for s in steps])
             checkpoint_file = "checkpoint" + str(step) + ".pt"
         else:
@@ -172,7 +172,7 @@ class AE_causal(nn_tilde.Module):
         if FLAGS.step is None:
             files = os.listdir(FLAGS.model_path)
             files = [f for f in files if f.startswith("checkpoint")]
-            steps = [f.split("_")[-2].replace("checkpoint", "") for f in files]
+            steps = [f.replace("checkpoint", "")[:-3] for f in files]
             step = max([int(s) for s in steps])
             checkpoint_file = "checkpoint" + str(step) + ".pt"
         else:
