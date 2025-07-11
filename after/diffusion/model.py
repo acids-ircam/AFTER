@@ -252,7 +252,7 @@ class Base(nn.Module):
 
         # Loging
         logger = SummaryWriter(log_dir=model_dir + "/logs")
-        self.tepoch = tqdm(total=max_steps, unit="batch")
+        self.tepoch = tqdm(total=max_steps - self.step, initial=self.step, unit="batch")
 
         n_epochs = max_steps // len(dataloader) + 1
         if restart_step is not None:

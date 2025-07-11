@@ -15,7 +15,7 @@ import os
 
 
 class Dummy():
-    
+
     def __getattr__(self, key):
 
         def dummy_func(*args, **kwargs):
@@ -39,7 +39,7 @@ class Trainer(nn.Module):
                  freeze_encoder_step=1000000000,
                  device="cpu",
                  update_discriminator_every: int = 3,
-                 accelerator = None):
+                 accelerator=None):
 
         super().__init__()
 
@@ -65,7 +65,6 @@ class Trainer(nn.Module):
         self.update_discriminator_every = update_discriminator_every
 
         self.init_opt()
-            
 
     def compute_loss(self,
                      x,
@@ -111,7 +110,9 @@ class Trainer(nn.Module):
                 names.append(loss.name + "_multiband")
 
         if self.discriminator is not None:
-            names.extend(accelerator.unwrap_model(self.discriminator).get_losses_names())
+            names.extend(
+                accelerator.unwrap_model(
+                    self.discriminator).get_losses_names())
         self.losses_names = names
         return names
 
@@ -149,7 +150,7 @@ class Trainer(nn.Module):
             self.weight_waveform_losses = rec_loss_decay**(self.step -
                                                            self.warmup_steps)
 
-    def training_step(self, x, accelerator = None):
+    def training_step(self, x, accelerator=None):
 
         self.train()
 
@@ -157,13 +158,13 @@ class Trainer(nn.Module):
             ) and self.step % self.update_discriminator_every == 0:
 
             with torch.no_grad():
-                y, y_multiband, z, regloss, x_multiband = self.model(x, return_all = True)
+                y, y_multiband, z, regloss, x_multiband = self.model(
+                    x, return_all=True)
                 #z, x_multiband, _ = self.model.encode(x, with_multi=True)
                 #y, y_multiband = self.model.decode(z, with_multi=True)
 
             loss_out = {}
-            loss_gen, loss_dis, loss_dis_dict = self.discriminator(
-                x, y)
+            loss_gen, loss_dis, loss_dis_dict = self.discriminator(x, y)
 
             self.opt_dis.zero_grad()
             if accelerator is not None:
@@ -183,9 +184,9 @@ class Trainer(nn.Module):
             #         z = z.detach()
             # else:
             #     z, x_multiband, regloss = self.model.encoder(x, with_multi=True)
-                
-            y, y_multiband, z, regloss, x_multiband = self.model(x, return_all = True)
-            
+
+            y, y_multiband, z, regloss, x_multiband = self.model(
+                x, return_all=True)
 
             #y, y_multiband = self.model.decode(z, with_multi=True)
             loss_ae, loss_out = self.compute_loss(x,
@@ -195,17 +196,16 @@ class Trainer(nn.Module):
                                                   regloss=regloss)
 
             if self.warmup:
-                loss_gen, loss_dis, loss_dis_dict = self.discriminator(
-                    x, y)
+                loss_gen, loss_dis, loss_dis_dict = self.discriminator(x, y)
             else:
                 loss_gen = 0.
                 loss_dis_dict = {
                     k: 0.
-                    for k in accelerator.unwrap_model(self.discriminator).get_losses_names()
+                    for k in accelerator.unwrap_model(
+                        self.discriminator).get_losses_names()
                 }
 
             loss_gen = loss_gen + loss_ae
-
 
             loss_out.update(loss_dis_dict)
             self.opt.zero_grad()
@@ -224,12 +224,12 @@ class Trainer(nn.Module):
 
         #self.eval()
         all_losses = {key: 0 for key in self.losses_names}
-        
-        
+
         with torch.no_grad():
             for i, x in enumerate(validloader):
                 x = x.to(self.device)
-                y, y_multiband, z, regloss, x_multiband = self.model(x, return_all = True)
+                y, y_multiband, z, regloss, x_multiband = self.model(
+                    x, return_all=True)
 
                 _, losses = self.compute_loss(x, y)
 
@@ -270,16 +270,24 @@ class Trainer(nn.Module):
             rec_loss_decay=0.999996,
             weight_regularisation_loss=1.,
             warmup_regularisation_loss=100000,
-            accelerator = None):
+            accelerator=None):
 
         if tensorboard is not None and accelerator.is_main_process:
             logger = SummaryWriter(log_dir=tensorboard)
         else:
             logger = Dummy()
 
-        tepoch = tqdm(range(self.max_steps), unit="batch")
-        all_losses_sum = {key: 0 for key in self.get_losses_names(accelerator=accelerator)}
-        all_losses_count = {key: 0 for key in self.get_losses_names(accelerator=accelerator)}
+        tepoch = tqdm(range(self.step, self.max_steps),
+                      initial=self.step,
+                      unit="batch")
+        all_losses_sum = {
+            key: 0
+            for key in self.get_losses_names(accelerator=accelerator)
+        }
+        all_losses_count = {
+            key: 0
+            for key in self.get_losses_names(accelerator=accelerator)
+        }
         self.weight_waveform_losses = 1.
         self.weight_regularisation_loss = weight_regularisation_loss
         self.warmup_regularisation_loss = warmup_regularisation_loss
@@ -296,10 +304,10 @@ class Trainer(nn.Module):
                 for k in all_losses:
                     all_losses_sum[k] += all_losses[k]
                     all_losses_count[k] += 1
-                
+
                 if accelerator.is_main_process:
                     tepoch.update(1)
-                    
+
                 self.update_waveform_losses(rec_loss_decay)
 
                 if not self.step % steps_display and accelerator.is_main_process:
@@ -319,31 +327,33 @@ class Trainer(nn.Module):
 
                     if validloader is not None:
                         all_losses, audio = self.val_step(validloader,
-                                                        get_audio=True)
-                        
-                        print("Validation Loss at step ", self.step, " : ", all_losses["total_loss"])
-                            # 
+                                                          get_audio=True)
+
+                        print("Validation Loss at step ", self.step, " : ",
+                              all_losses["total_loss"])
+                        #
                         if logger and accelerator.is_main_process:
                             for k, v in all_losses.items():
                                 logger.add_scalar('Validation/' + k,
-                                                v,
-                                                global_step=self.step)
+                                                  v,
+                                                  global_step=self.step)
 
                             logger.add_audio("Validation/Audio",
-                                            audio,
-                                            global_step=self.step,
-                                            sample_rate=self.sr)
+                                             audio,
+                                             global_step=self.step,
+                                             sample_rate=self.sr)
                 if not (self.step % 50000):
                     print("saving:", accelerator.process_index)
                     if accelerator.is_main_process:
                         unwrapped_model = accelerator.unwrap_model(self.model)
-                        unwrapped_discriminator = accelerator.unwrap_model(self.discriminator)
-                        
+                        unwrapped_discriminator = accelerator.unwrap_model(
+                            self.discriminator)
+
                         d = {
-                        "model_state": unwrapped_model.state_dict(),
-                        "opt_state": self.opt.state_dict(),
-                        "dis_state": unwrapped_discriminator.state_dict(),
-                        "opt_dis_state": self.opt_dis.state_dict()
+                            "model_state": unwrapped_model.state_dict(),
+                            "opt_state": self.opt.state_dict(),
+                            "dis_state": unwrapped_discriminator.state_dict(),
+                            "opt_dis_state": self.opt_dis.state_dict()
                         }
 
                         accelerator.save(
@@ -352,7 +362,7 @@ class Trainer(nn.Module):
 
                     accelerator.wait_for_everyone()
                     print("finished saving:", accelerator.process_index)
-                            
+
                 if self.step > self.max_steps + 1000:
                     exit()
 
