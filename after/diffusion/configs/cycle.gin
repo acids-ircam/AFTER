@@ -11,4 +11,4 @@ diffusion.model.Base.fit:
     cycle_scaling = 'ramps'
     cycle_start_step = 600000
     cycle_swap_target = 'cond'
-    cycle_weights = [0.15, 0.]
+    cycle_weights = [0.15, 0.15]

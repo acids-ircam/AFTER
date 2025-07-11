@@ -233,19 +233,6 @@ def main(argv):
             )
 
             self.register_method(
-                "generate",
-                in_channels=zt_channels + zs_channels,
-                in_ratio=self.ae_ratio,
-                out_channels=1,
-                out_ratio=1,
-                input_labels=[
-                    f"(signal) Input structure {i}" for i in range(zs_channels)
-                ] + [f"(signal) Input timbre {i}" for i in range(zt_channels)],
-                output_labels=[f"(signal) Audio output"],
-                test_buffer_size=self.chunk_size * self.ae_ratio,
-            )
-
-            self.register_method(
                 "diffuse",
                 in_channels=zt_channels + zs_channels,
                 in_ratio=self.ae_ratio,
@@ -262,6 +249,33 @@ def main(argv):
                     f"(signal) Latent output {i}"
                     for i in range(self.ae_latents)
                 ],
+                test_buffer_size=self.chunk_size * self.ae_ratio,
+            )
+
+            self.register_method(
+                "generate",
+                in_channels=zt_channels + zs_channels,
+                in_ratio=self.ae_ratio,
+                out_channels=1,
+                out_ratio=1,
+                input_labels=[
+                    f"(signal) Input structure {i}" for i in range(zs_channels)
+                ] + [f"(signal) Input timbre {i}" for i in range(zt_channels)],
+                output_labels=[f"(signal) Audio output"],
+                test_buffer_size=self.chunk_size * self.ae_ratio,
+            )
+
+            self.register_method(
+                "generate_timbre",
+                in_channels=zt_channels + 1,
+                in_ratio=1,
+                out_channels=1,
+                out_ratio=1,
+                input_labels=[f"(signal) audio structure"] + [
+                    f"(signal_{i}) Input timbre"
+                    for i in range(self.zt_channels)
+                ],
+                output_labels=[f"(signal) audio out"],
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
@@ -435,6 +449,24 @@ def main(argv):
             return x
 
         @torch.jit.export
+        def diffuse_timbre(self, x: torch.Tensor) -> torch.Tensor:
+
+            n = x.shape[0]
+            zsem = x[:, 1:].mean(-1)
+            zsem = zsem * self.latent_range
+
+            audio = x[:, :1, :]
+            print(audio.shape)
+            time_cond = self.structure(audio)
+
+            x = torch.randn(n, self.ae_latents, time_cond.shape[-1])
+            x = self.sample(x[:1], time_cond=time_cond[:1], cond=zsem[:1])
+
+            if n > 1:
+                x = x.repeat(n, 1, 1)
+            return x
+
+        @torch.jit.export
         def decode(self, x: torch.Tensor) -> torch.Tensor:
             audio = self.emb_model_structure.decode(x)
             return audio
@@ -442,6 +474,12 @@ def main(argv):
         @torch.jit.export
         def generate(self, x: torch.Tensor) -> torch.Tensor:
             z = self.diffuse(x)
+            audio = self.decode(z)
+            return audio
+
+        @torch.jit.export
+        def generate_timbre(self, x: torch.Tensor) -> torch.Tensor:
+            z = self.diffuse_timbre(x)
             audio = self.decode(z)
             return audio
 

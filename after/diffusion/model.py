@@ -412,15 +412,15 @@ class Base(nn.Module):
 
                     lossdict = {
                         "Diffusion loss": diffusion_loss.item(),
-                        "Classifier loss": classifier_loss.item(),
+                        "Adversarial loss": classifier_loss.item(),
                         "Adversarial Regularisation weight":
                         adversarial_weight_cur,
-                        "Latent Regularisation weight":
-                        regularisation_weight_cur,
-                        "Cycle loss - cond": cond_cycle_loss.item(),
-                        "Cycle loss - time_cond": time_cond_cycle_loss.item(),
-                        "Cycle weight - cond": cycle_weights_cur[0],
-                        "Cycle weight - time_cond": cycle_weights_cur[1],
+                        # "Latent Regularisation weight":
+                        # regularisation_weight_cur,
+                        # "Cycle loss - cond": cond_cycle_loss.item(),
+                        # "Cycle loss - time_cond": time_cond_cycle_loss.item(),
+                        # "Cycle weight - cond": cycle_weights_cur[0],
+                        # "Cycle weight - time_cond": cycle_weights_cur[1],
                         "cond_reg": cond_reg.item(),
                         "time_cond_reg": time_cond_reg.item(),
                     }
@@ -516,6 +516,24 @@ class Base(nn.Module):
 
                         audio_true = self.emb_model.decode(x1.cpu()).cpu()
 
+                        # for nb_steps in [5, 40]:
+                        x1_rec = self.sample(x0,
+                                             nb_steps=20,
+                                             time_cond=time_cond,
+                                             cond=cond)
+
+                        audio_rec = self.emb_model.decode(x1_rec.cpu()).cpu()
+
+                        # SAMPLING TRANSFERS
+                        shifted_cond = torch.roll(cond, shifts=-1, dims=0)
+                        x1_transfer = self.sample(x0,
+                                                  nb_steps=20,
+                                                  time_cond=time_cond,
+                                                  cond=shifted_cond)
+
+                        audio_transfer = self.emb_model.decode(
+                            x1_transfer.cpu()).cpu()
+
                         with warnings.catch_warnings():
                             warnings.simplefilter("ignore")
                             for i in range(x1.shape[0]):
@@ -524,22 +542,17 @@ class Base(nn.Module):
                                                  global_step=self.step,
                                                  sample_rate=self.sr)
 
-                            for nb_steps in [5, 40]:
-                                x1_rec = self.sample(x0,
-                                                     nb_steps=nb_steps,
-                                                     time_cond=time_cond,
-                                                     cond=cond)
+                                logger.add_audio("reconstruction/" + str(i),
+                                                 audio_rec[i],
+                                                 global_step=self.step,
+                                                 sample_rate=self.sr)
 
-                                audio_rec = self.emb_model.decode(
-                                    x1_rec.cpu()).cpu()
-
-                                for i in range(x1.shape[0]):
-                                    logger.add_audio("generated/" +
-                                                     str(nb_steps) + "steps/" +
-                                                     str(i),
-                                                     audio_rec[i],
-                                                     global_step=self.step,
-                                                     sample_rate=self.sr)
+                                logger.add_audio("transfer/" + str(i) +
+                                                 "_to_" + str(
+                                                     (i + 1) % x1.shape[0]),
+                                                 audio_transfer[i],
+                                                 global_step=self.step,
+                                                 sample_rate=self.sr)
 
                 if self.step % steps_save == 0:
                     self.save_model(model_dir)

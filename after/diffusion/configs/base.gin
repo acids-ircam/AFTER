@@ -13,7 +13,7 @@ ZT_CHANNELS = 6
 SR = 44100
 STRUCTURE_TYPE = "audio"
 PHASE_1_STEP = 100000
-MAX_STEPS = 2000000
+MAX_STEPS = 800000
 
 LOCAL_ATTENTION_SIZE = 8
 ATTENTION_CHUNK_SIZE = 4
@@ -86,7 +86,7 @@ diffusion.model.Base:
     classifier = @classifier/diffusion.networks.Encoder1D()
     time_transform = None
     drop_value = -4.
-    drop_rate = 0.15
+    drop_rate = 0.2
 
  
 diffusion.model.Base.fit: 
@@ -96,14 +96,14 @@ diffusion.model.Base.fit:
 
     ## Adversarial
     timbre_warmup = %PHASE_1_STEP
-    adversarial_warmup = 50000
+    adversarial_warmup = 30000
     stop_training_encoder_step = %PHASE_1_STEP
     stop_training_encoder_time_step = %MAX_STEPS
     update_classifier_every = 3
     adversarial_loss = "cosine"
-    adversarial_weight = 0.075
+    adversarial_weight = 0.075      
 
-    drop_targets = [1]
+    drop_targets = [0,1]
 
     # Noise augmentation to smooth the latent space
     zsem_noise_aug = 0.03
