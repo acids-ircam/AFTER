@@ -322,18 +322,37 @@ class Encoder1D(nn.Module):
         return x
 
 
+def compute_mean_kernel(x, y):
+    kernel_input = (x[:, None] - y[None]).pow(2).mean(2) / x.shape[-1]
+    return torch.exp(-kernel_input).mean()
+
+
+def compute_mmd(x, y):
+    x_kernel = compute_mean_kernel(x, x)
+    y_kernel = compute_mean_kernel(y, y)
+    xy_kernel = compute_mean_kernel(x, y)
+    mmd = x_kernel + y_kernel - 2 * xy_kernel
+    return mmd
+
+
 @gin.configurable
 class LinearEncoder(nn.Module):
 
     def __init__(self,
                  in_size=512,
                  channels=[512, 1024, 1024, 256, 8],
-                 drop_out=0.15):
+                 drop_out=0.15,
+                 use_tanh=False,
+                 regularisation="none"):
         #out_fn=nn.Identity(),
         #**kwargs):
         super().__init__()
+        self.use_tanh = use_tanh
         module_list = []
         module_list.append(nn.Linear(in_size, channels[0]))
+
+        if regularisation == "vae":
+            channels[-1] = channels[-1] * 2
 
         for i in range(len(channels) - 1):
             module_list.append(nn.SiLU())
@@ -342,7 +361,75 @@ class LinearEncoder(nn.Module):
 
         self.net = nn.Sequential(*module_list)
 
+        self.regularisation = regularisation
+
+    def calc_expansion(self, z, eps=0.5) -> torch.Tensor:
+        """
+        Compute expansion loss using Coding Rate estimation.
+        """
+        m, p = z.shape
+
+        W_centered = z - z.mean(dim=0, keepdim=True)
+        cov = (W_centered.T @ W_centered) / (m - 1)
+
+        scalar = p / (m * eps)
+        I = torch.eye(p, device=cov.device)
+        loss = torch.linalg.cholesky_ex(I + scalar *
+                                        cov)[0].diagonal().log().sum()
+
+        loss *= (p * m) / (
+            p * m
+        )  # the balancing factor gamma, you can also use the next line. This is ultimately a heuristic, so feel free to experiment.
+        # loss *= ((self.eps * N * m) ** 0.5 / p)
+        return loss
+
         #self.out_fn = out_fn
 
-    def forward(self, x):
-        return torch.tanh(self.net(x))
+    @torch.jit.ignore
+    def forward(self, x, return_full=False):
+        if self.use_tanh:
+            x = torch.tanh(self.net(x))
+        else:
+            x = self.net(x)
+
+        if self.regularisation == "wasserstein":
+            kl = compute_mmd(x, torch.randn_like(x)).mean()
+            mean = x
+
+        elif self.regularisation == "vae":
+            mean, scale = x.chunk(2, 1)
+
+            std = nn.functional.softplus(scale) + 1e-4
+            var = std * std
+            logvar = torch.log(var)
+
+            x = torch.randn_like(mean) * std + mean
+            kl = (mean * mean + var - logvar - 1).sum(1).mean()
+            kl = kl  #* 1e-4
+
+        elif self.regularisation == "ac":
+            kl = (1 + torch.nn.functional.relu((abs(x) - 1))).mean()
+            mean = x
+
+        # elif self.regularisation == "expansion":
+        #     kl = self.calc_expansion(x)
+        #     mean = x
+        else:
+            mean = x
+            kl = torch.tensor(0.).to(x)
+
+        if return_full:
+            return x, mean, kl
+
+        return x
+
+    @torch.jit.export
+    def forward_stream(self, x):
+        x = self.net(x)
+        if self.use_tanh:
+            x = torch.tanh(x)
+
+        if self.regularisation == "vae":
+            x, _ = x.chunk(2, 1)
+
+        return x

@@ -24,15 +24,15 @@ USE_NOISE_GENERATOR = False
 
 ## TRAINING
 FREEZE_ENCODER_STEPS = 1500000
+MAX_STEPS = 1000000
 WARMUP_STEPS = 200000
-MAX_STEPS = 2000000
 REGULARISATION_WEIGHT  = 0.1
 REGULARISATION_WARMUP = 100000
 
 # cached_conv.get_padding:
 #     mode = "causal"
 
-SimpleNetsStream.TanhBottleneck:
+SimpleNetsStream.ReluBottleneck:
     sigma = 0.01
     scale = 3
     
@@ -45,8 +45,8 @@ SimpleNetsStream.AutoEncoder:
     factors = [2, 2, 2, 4, 4]  # Factors of upsampling for each block
     dilations = [1, 3, 9]
     kernel_size = %KERNEL_SIZE
-    bottleneck  =  @SimpleNetsStream.TanhBottleneck() #@SimpleNetsStream.TanhBottleneck()
-    use_norm = False   #Wheter to use group normalization : DISABLE FOR STREAMING MODELS
+    bottleneck  =  @SimpleNetsStream.ReluBottleneck() #@SimpleNetsStream.TanhBottleneck()
+    use_norm = True   #Wheter to use group normalization : DISABLE FOR STREAMING MODELS
     decoder_ratio = %DECODER_RATIO
     use_loudness = True
     use_noise = %USE_NOISE_GENERATOR 
@@ -106,6 +106,6 @@ autoencoder.trainer.Trainer:
 
 autoencoder.trainer.Trainer.fit:
     steps_display=100
-    rec_loss_decay=0.999996
+    rec_loss_decay=0.99998
     weight_regularisation_loss=%REGULARISATION_WEIGHT
     warmup_regularisation_loss=%REGULARISATION_WARMUP

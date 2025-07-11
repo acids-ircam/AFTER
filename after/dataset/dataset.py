@@ -21,7 +21,6 @@ class SimpleDataset(torch.utils.data.Dataset):
         readonly=True,
     ) -> None:
         super().__init__()
-
         self.num_sequential = num_sequential
         self.max_samples = max_samples
         self.recache_every = recache_every
@@ -241,5 +240,4 @@ class CombinedDataset(torch.utils.data.Dataset):
         dataset_id = self.dataset_ids[idx]
         data = self.datasets[dataset_id][self.all_indexes[idx]]
         data["label"] = dataset_id
-
         return data

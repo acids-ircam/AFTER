@@ -29,13 +29,13 @@ If you already have a streamable audio codec such as a pretrained [RAVE](https:/
 Before training the autoencoder, you need to preprocess your audio files into an lmdb database :
 
 ```bash
-after prepare_dataset --input_path /audio/folder --output_path /dataset/path --save_waveform True --waveform_augmentation none 
+after prepare_dataset --input_path /audio/folder --output_path /dataset/path_audio --save_waveform True 
 ```
 
 Then, you can start the model training 
 
 ```bash
-after train_autoencoder --name AE_model_name --db_path /audio/folder  --config baseAE --gpu 0
+after train_autoencoder --name AE_model_name --db_path /dataset/path_audio  --config baseAE --gpu 0
 ```
 
 where `db_path` refers to the prepared dataset location. The tensorboard logs and checkpoints are saved by default to `./autoencoder_runs/`.
@@ -43,15 +43,15 @@ where `db_path` refers to the prepared dataset location. The tensorboard logs an
 After training, the model has to be exported to a torchscript file using
 
 ```bash
-after export_autoencoder  --model_path autoencoder_runs/AE_model_name --step 1000000
+after export_autoencoder  --model_path autoencoder_runs/AE_model_name 
 ```
-This will save two .ts files in the run folder, one for streaming and one for offline inference (export_stream.ts and export.ts respectively).
+This will save two .ts files in the run folder, one for streaming and one for offline inference (export_stream.ts and export.ts respectively). By default the last training step checkpoint is used for export.
 
 ### AFTER training
 First, you need to prepare your dataset before training. Since our diffusion model works in the latent space of the autoencoder, we pre-compute the latent embeddings to speed up training : 
 
 ```bash
-after prepare_dataset --input_path /audio/folder --output_path /dataset/path --emb_model_path AE_model_run_path/export.ts
+after prepare_dataset --input_path /audio/folder --output_path /dataset/path_latent_codes --emb_model_path AE_model_run_path/export.ts
 ```
 
 - `num_signal` flag sets the duration of the audio chunks for training in number of samples (must be a power of 2). (default: 524288 ~ 11 seconds)
@@ -65,7 +65,7 @@ If you plan to have more advanced use of the models, please refer to the help fu
 Then, a training is started with 
 
 ```bash
-after train  --name diff_model_name --db_path /dataset/path --emb_model_path AE_model_run_path/export.ts --config CONFIG_NAME
+after train  --name diff_model_name --db_path /dataset/path_latent_codes --emb_model_path AE_model_run_path/export.ts --config CONFIG_NAME
 ```
 
 Different configurations are available in `diffusion/configs` and can be combined : 
@@ -102,30 +102,36 @@ Different configurations are available in `diffusion/configs` and can be combine
 </table>
 
 
-
-
 The tensorboard logs and checkpoints are saved to  `/diffusion/runs/model_name`, and you can experiment with you trained model using the notebooks `notebooks/audio_to_audio_demo.ipynb` and `notebooks/midi_to_audio_demo.ipynb`.
 
 ### Export
 
-Once the training is complete, you can export the model to an [_nn_tilde_](https://github.com/acids-ircam/nn_tilde) torchscript file for inference in MaxMSP and PureData.
+Once the training is complete, you can export the model to an [_nn_tilde_](https://github.com/acids-ircam/nn_tilde) torchscript file for inference in MaxMSP, PureData or Ableton Live. 
 
 For an audio-to-audio model :
 ```bash
-after export --model_path diff_model_name --emb_model_path AE_model_run_path/export_stream.ts --step 800000
+after export --model_path diff_model_name --emb_model_path AE_model_run_path/export_stream.ts
 ```
 
 For a MIDI-to-audio model :
 
 ```bash
-after export_midi --model_path diff_model_name --emb_model_path AE_model_run_path/export_stream.ts --npoly 4 --step 800000
+after export_midi --model_path diff_model_name --emb_model_path AE_model_run_path/export_stream.ts 
 ```
 
-where `npoly` sets the number for voices for polyphony. Make sure to use the streaming version of the exported autoencoder (denoted by _stream.ts).
+Make sure to use the streaming version of the exported autoencoder (denoted by _stream.ts).
 
-## Inference in MaxMSP
+## Inference
 
 You can experiment with inference in MaxMSP using the patches in `./patchs` and the pretrained models available [here](https://nubo.ircam.fr/index.php/s/8NFD5gWwbkT4G5P).
+
+We also provide two Max4Live devices to use your models in Ableton Live. By default the export scripts trains a small network to remap the timbre latent space to a 2D map that can be used for latent exploration in our Max4Live device (see below). If you use multiple datasets, each dataset will correspond to one color on the latent map. The 2D map is used for coarse latent control, which you can refine by directly changing the latent dimensions. Make sure to download the .ts file along with .png latent map created with the export script.
+
+<p align="center">
+  <img src="docs/after_midi.png" />
+  <br/>
+  <img src="docs/after_audio.png" />
+</p>
 
 
 <!-- ### MIDI-to-Audio 

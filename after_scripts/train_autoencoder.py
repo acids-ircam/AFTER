@@ -23,7 +23,7 @@ flags.DEFINE_multi_string(
 flags.DEFINE_multi_float("freqs", None,
                          "Sampling frequencies for multiple datasets.")
 flags.DEFINE_multi_string("config", [], "List of config files")
-flags.DEFINE_integer("restart", 0, "Restart step")
+flags.DEFINE_integer("restart", None, "Restart step")
 flags.DEFINE_integer("bsize", 6, "Batch size")
 flags.DEFINE_integer("num_signal", 131072, "Number of signals")
 flags.DEFINE_integer("gpu", -1, "GPU ID")
@@ -47,7 +47,7 @@ def main(argv):
     device = "cuda:" + str(FLAGS.gpu) if FLAGS.gpu >= 0 else "cpu"
 
     ## GIN CONFIG
-    if FLAGS.restart > 0:
+    if FLAGS.restart is not None:
         config_path = os.path.join(FLAGS.save_dir, model_name, "config.gin")
         with gin.unlock_config():
             gin.parse_config_files_and_bindings([config_path], [])
@@ -128,7 +128,7 @@ def main(argv):
 
     if FLAGS.use_psts:
         from after.dataset.transforms import PSTS
-        ts = PSTS(sr, ts_min=0.51, ts_max=1.99, pitch_min=-4, pitch_max=+4)
+        ts = PSTS(sr, ts_min=0.71, ts_max=1.5, pitch_min=-4, pitch_max=+4)
         transforms.append(RandomApply(ts, p=0.5))
 
     def collate_fn(x):
@@ -203,22 +203,22 @@ def main(argv):
     x = next(iter(dataloader))
     print("Training size : ", x.shape)
 
-    if step_restart > 0:
+    if step_restart is not None:
         print("Loading model from step ", step_restart)
         path = os.path.join(FLAGS.save_dir, model_name)
         trainer.load_model(path, step_restart, load_discrim=True)
-    
+
     accelerator = Accelerator()
 
     dataloader, _, trainer.model, trainer.discriminator, trainer.opt, trainer.opt_dis = accelerator.prepare(
-        dataloader, validloader,  trainer.model, trainer.discriminator, trainer.opt, trainer.opt_dis
-    )
+        dataloader, validloader, trainer.model, trainer.discriminator,
+        trainer.opt, trainer.opt_dis)
     trainer.device = accelerator.device
-    
+
     trainer.fit(dataloader,
                 validloader,
                 tensorboard=os.path.join(FLAGS.save_dir, model_name),
-                accelerator = accelerator)
+                accelerator=accelerator)
 
 
 if __name__ == "__main__":

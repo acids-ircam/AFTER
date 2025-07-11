@@ -1,5 +1,5 @@
-torch
-torchaudio
+torch>=2.0
+torchaudio>=2.0
 lmdb
 einops_exts
 torch_ema
@@ -21,4 +21,5 @@ pedalboard
 librosa
 nn_tilde
 rotary_embedding_torch
-audiomentations
+audiomentations<=0.40
+accelerate
