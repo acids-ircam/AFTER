@@ -26,7 +26,7 @@ diffusion.utils.collate_fn:
 ### ARCHITECTURE ### 
 encoder/diffusion.networks.ecapa_encoder.ECAPATDNN:
     attention_channels = 128
-    channels = [512, 512, 512, 512]
+    channels = [256, 256, 256, 512]
     dilations = [1, 1, 1, 1]
     global_context = True
     groups = [1, 1, 1, 1]
@@ -65,10 +65,10 @@ classifier/diffusion.networks.Encoder1D:
 diffusion.networks.transformerv2.DenoiserV2:
     n_channels = %IN_SIZE
     seq_len = %N_SIGNAL   
-    embed_dim = 512
+    embed_dim = 256
     cond_dim = %ZT_CHANNELS
     noise_embed_dims = 64
-    n_layers = 4
+    n_layers = 6
     mlp_multiplier = 3
     dropout  = 0.1
     causal = True

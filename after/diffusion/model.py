@@ -251,8 +251,9 @@ class Base(nn.Module):
             self.ema = ExponentialMovingAverage(params, decay=0.999)
 
         # Loging
+        print(max_steps)
         logger = SummaryWriter(log_dir=model_dir + "/logs")
-        self.tepoch = tqdm(total=max_steps - self.step, initial=self.step, unit="batch")
+        self.tepoch = tqdm(total=max_steps, initial=self.step, unit="batch")
 
         n_epochs = max_steps // len(dataloader) + 1
         if restart_step is not None:
@@ -473,6 +474,11 @@ class Base(nn.Module):
                                 time_cond = self.drop_value * torch.ones_like(
                                     time_cond)
 
+                            cond_drop, time_cond_drop = self.cfgdrop(
+                                [cond, time_cond],
+                                bsize=x1.shape[0],
+                                drop_targets=drop_targets,
+                                drop_rate=self.drop_rate)
                             diffusion_loss, _, _ = self.diffusion_step(
                                 x1, time_cond=time_cond, cond=cond)
 

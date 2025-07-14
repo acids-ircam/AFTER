@@ -13,7 +13,7 @@ ZT_CHANNELS = 6
 SR = 44100
 STRUCTURE_TYPE = "audio"
 PHASE_1_STEP = 100000
-MAX_STEPS = 800000
+MAX_STEPS = 1000000
 
 LOCAL_ATTENTION_SIZE = 8
 ATTENTION_CHUNK_SIZE = 4
@@ -96,7 +96,7 @@ diffusion.model.Base.fit:
 
     ## Adversarial
     timbre_warmup = %PHASE_1_STEP
-    adversarial_warmup = 30000
+    adversarial_warmup = 60000
     stop_training_encoder_step = %PHASE_1_STEP
     stop_training_encoder_time_step = %MAX_STEPS
     update_classifier_every = 3
