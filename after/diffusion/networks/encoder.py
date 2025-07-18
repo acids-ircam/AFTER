@@ -31,7 +31,9 @@ class V2ConvBlock1D(nn.Module):
                  kernel_size,
                  act=nn.SiLU,
                  res=True,
-                 cumulative_delay=0):
+                 cumulative_delay=0,
+                 norm_type="batch_norm",
+                 num_groups=8):
         super().__init__()
         self.res = res
 
@@ -48,10 +50,14 @@ class V2ConvBlock1D(nn.Module):
                       padding=cc.get_padding(kernel_size),
                       cumulative_delay=conv1.cumulative_delay))
 
-        self.gn1 = nn.BatchNorm1d(in_c)
-        self.gn2 = nn.BatchNorm1d(out_c)
+        if norm_type == "batch_norm":
+            self.gn1 = nn.BatchNorm1d(in_c)
+            self.gn2 = nn.BatchNorm1d(out_c)
+        elif norm_type == "group_norm":
+            self.gn1 = nn.GroupNorm(min(in_c, min(num_groups, in_c//4)), in_c)
+            self.gn2 = nn.GroupNorm(min(out_c, min(num_groups, out_c//4)), out_c)
         act = act
-        self.dp = nn.Dropout(p=0.15)
+        self.dp = nn.Dropout(p=0.1)
 
         #net = [self.gn1, act(), conv1, self.gn2, act(), self.dp, conv2]
         net = [self.gn1, act(), conv1, self.gn2, act(), self.dp, conv2]
@@ -80,12 +86,14 @@ class V2EncoderBlock1D(nn.Module):
                  out_c,
                  kernel_size,
                  ratio,
-                 cumulative_delay=0):
+                 cumulative_delay=0,
+                 norm_type="batch_norm"):
         super().__init__()
         conv = V2ConvBlock1D(in_c + tot_cond_channels,
                              in_c,
                              kernel_size,
-                             cumulative_delay=cumulative_delay)
+                             cumulative_delay=cumulative_delay,
+                             norm_type=norm_type)
 
         if ratio != 1:
             pool = normalization(
@@ -129,7 +137,8 @@ class Encoder1D(nn.Module):
                  spherical_normalization=False,
                  vae_regularisation=False,
                  ac_regularisation=False,
-                 wassertstein_regularisation=False):
+                 wassertstein_regularisation=False,
+                 norm_type="batch_norm"):
         super().__init__()
 
         self.use_tanh = use_tanh
@@ -173,7 +182,8 @@ class Encoder1D(nn.Module):
                              c_channels,
                              channels[0],
                              kernel_size,
-                             ratio=ratios[0]))
+                             ratio=ratios[0],
+                             norm_type=norm_type))
 
         for i in range(1, n):
             net.append(
@@ -182,13 +192,15 @@ class Encoder1D(nn.Module):
                                  channels[i],
                                  kernel_size,
                                  ratios[i],
-                                 cumulative_delay=net[-1].cumulative_delay))
+                                 cumulative_delay=net[-1].cumulative_delay,
+                                 norm_type=norm_type))
 
         net.append(
             V2ConvBlock1D(channels[-1] + c_channels,
                           channels[-1],
                           kernel_size,
-                          cumulative_delay=net[-1].cumulative_delay))
+                          cumulative_delay=net[-1].cumulative_delay,
+                          norm_type=norm_type))
 
         self.net = cc.CachedSequential(*net)
 

@@ -52,7 +52,13 @@ def collate_fn(batch,
     x = torch.from_numpy(np.stack([b["z"] for b in batch], axis=0))
     batch_size = x.shape[0]
 
-    i0 = np.random.randint(0, x.shape[-1] - n_signal, x.shape[0])
+    if n_signal == x.shape[-1]:
+        i0 = np.zeros(x.shape[0], dtype=int)
+    elif n_signal > x.shape[-1]:
+        raise ValueError(
+            "n_signal cannot be greater than dataset signal length")
+    else:
+        i0 = np.random.randint(0, x.shape[-1] - n_signal, x.shape[0])
     x_target = crop([x], n_signal, i0)[0]
 
     if len(timbre_augmentation_keys) > 0:
@@ -63,12 +69,17 @@ def collate_fn(batch,
         indexes = np.random.randint(0, len(all_timbre), batch_size)
         for i in range(batch_size):
             current_x = all_timbre[indexes[i]][i]
-
-            if current_x.shape[-1] < n_signal + 1:
+            if current_x.shape[-1] < n_signal:
                 current_x = x[i]
-                print(
-                    "Warning: timbre signal too short, using original signal")
-            i1 = np.random.randint(0, current_x.shape[-1] - n_signal, 1)[0]
+                # print(
+                # "Warning: timbre signal too short, using original signal")
+                current_x = np.pad(current_x,
+                                   (0, n_signal - current_x.shape[-1]),
+                                   mode="constant")
+            if n_signal == x.shape[-1]:
+                i1 = 0
+            else:
+                i1 = np.random.randint(0, current_x.shape[-1] - n_signal, 1)[0]
             current_x = current_x[..., i1:i1 + n_signal]
             x_timbre.append(current_x)
 
@@ -76,7 +87,10 @@ def collate_fn(batch,
 
     else:
         if timbre_limit is None:
-            i1 = np.random.randint(0, x.shape[-1] - n_signal, x.shape[0])
+            if n_signal == x.shape[-1]:
+                i1 = np.zeros(x.shape[0], dtype=int)
+            else:
+                i1 = np.random.randint(0, x.shape[-1] - n_signal, x.shape[0])
         else:
             nmax = int(n_signal * timbre_limit)
             i1 = np.random.randint(-nmax, nmax, x.shape[0])

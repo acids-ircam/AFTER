@@ -418,8 +418,8 @@ class Base(nn.Module):
                         adversarial_weight_cur,
                         # "Latent Regularisation weight":
                         # regularisation_weight_cur,
-                        # "Cycle loss - cond": cond_cycle_loss.item(),
-                        # "Cycle loss - time_cond": time_cond_cycle_loss.item(),
+                        "Cycle loss - cond": cond_cycle_loss.item(),
+                        "Cycle loss - time_cond": time_cond_cycle_loss.item(),
                         # "Cycle weight - cond": cycle_weights_cur[0],
                         # "Cycle weight - time_cond": cycle_weights_cur[1],
                         "cond_reg": cond_reg.item(),
@@ -658,11 +658,10 @@ class RectifiedFlow(Base):
 
         elif cycle_loss_type == "cosine":
             cond_cycle_loss = (1 - torch.nn.functional.cosine_similarity(
-                cond_rec, cond_target.detach(), dim=1, eps=1e-8)).mean()
+                cond_rec, cond_target, dim=1, eps=1e-8)).mean()
 
             time_cond_cycle_loss = (1 - torch.nn.functional.cosine_similarity(
-                time_cond_rec, time_cond_target.detach(), dim=1,
-                eps=1e-8)).mean()
+                time_cond_rec, time_cond_target, dim=1, eps=1e-8)).mean()
         else:
             raise ValueError("Invalid cycle loss type : " + cycle_loss_type)
 

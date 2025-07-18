@@ -132,10 +132,103 @@ class TimeStretch(BaseTransform):
 
 
 import pedalboard
-from audiomentations import TimeMask
+from audiomentations import TimeMask, TimeStretch, PitchShift
 
 
 class PSTS(BaseTransform):
+
+    def __init__(self,
+                 sr,
+                 ts_min=0.8,
+                 ts_max=1.25,
+                 pitch_min=-5,
+                 pitch_max=+5,
+                 chunk_size=16000,
+                 margin=2000,
+                 random_silence=True):
+        super().__init__(sr, "pstc")
+
+        self.sr = sr
+        self.ts_min = ts_min
+        self.ts_max = ts_max
+        self.pitch_min = pitch_min
+        self.pitch_max = pitch_max
+        self.core_size = chunk_size
+        self.margin = margin
+        self.random_silence = random_silence
+
+        self.pitch_aug = PitchShift(min_semitones=pitch_min,
+                                    max_semitones=pitch_max,
+                                    p=1.0)
+        self.time_aug = TimeStretch(min_rate=ts_min,
+                                    max_rate=ts_max,
+                                    leave_length_unchanged=False,
+                                    p=1.0)
+
+        self.silence_aug = TimeMask(
+            min_band_part=0.07,
+            max_band_part=0.15,
+            fade=True,
+            p=1.0,
+        ) if random_silence else None
+
+    def crossfade(self, chunk_a, chunk_b, fade_len):
+        """
+        Crossfade between the end of chunk_a and start of chunk_b.
+        Assumes both chunks already include the fade region.
+        """
+        fade_in = np.linspace(0, 1, fade_len)
+        fade_out = 1 - fade_in
+        crossfaded = (chunk_a[-fade_len:] * fade_out +
+                      chunk_b[:fade_len] * fade_in)
+        return np.concatenate(
+            [chunk_a[:-fade_len], crossfaded, chunk_b[fade_len:]])
+
+    def chunkwise_transform(self, audio):
+        core = self.core_size
+        margin = self.margin
+        step = core
+        total_len = len(audio)
+
+        chunks = []
+
+        for start in range(0, total_len, step):
+            chunk_start = max(0, start - margin)
+            chunk_end = min(total_len, start + core + margin)
+            chunk = audio[chunk_start:chunk_end]
+
+            # Apply pitch shift
+            chunk = self.pitch_aug(chunk, sample_rate=self.sr)
+            # Apply time stretch
+            chunk = self.time_aug(chunk, sample_rate=self.sr)
+
+            chunks.append(chunk)
+
+        # Combine chunks with crossfade on margins
+        output = chunks[0]
+        for i in range(1, len(chunks)):
+            prev = output
+            next_chunk = chunks[i]
+
+            # Ensure enough samples for crossfade
+            if len(prev) < self.margin or len(next_chunk) < self.margin:
+                output = np.concatenate([prev, next_chunk])
+                continue
+
+            # Crossfade using margin
+            output = self.crossfade(prev, next_chunk, fade_len=self.margin)
+
+        return output
+
+    def __call__(self, audio):
+        audio = self.chunkwise_transform(audio)
+        if self.silence_aug:
+            audio = self.silence_aug(audio, sample_rate=self.sr)
+            audio = self.silence_aug(audio, sample_rate=self.sr)
+        return audio
+
+
+class PSTSOLD(BaseTransform):
 
     def __init__(self,
                  sr,

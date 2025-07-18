@@ -8,6 +8,7 @@ import numpy as np
 import after
 from after.dataset import SimpleDataset, CombinedDataset
 from after.diffusion.utils import collate_fn, get_datasets
+from after.autoencoder import M2LWrapper
 from tqdm import tqdm
 
 from absl import flags, app
@@ -23,7 +24,7 @@ flags.DEFINE_string("model", "rectified", "Model type.")
 
 # Training
 flags.DEFINE_integer("bsize", 32, "Batch size.")
-flags.DEFINE_integer("n_signal", 128,
+flags.DEFINE_integer("n_signal", 64,
                      "Training length in number of latent steps")
 
 # DATASET
@@ -67,12 +68,14 @@ def main(argv):
     device = "cuda:" + str(FLAGS.gpu) if FLAGS.gpu >= 0 else "cpu"
 
     ######### BUILD MODEL #########
-
-    emb_model = torch.jit.load(FLAGS.emb_model_path).cpu()  #.to(device)
-    dummy = torch.randn(1, 1, 4096)  #.to(device)
+    if FLAGS.emb_model_path == "music2latent":
+        emb_model = M2LWrapper(device="cpu")
+    else:
+        emb_model = torch.jit.load(FLAGS.emb_model_path).cpu()
+    dummy = torch.randn(1, 1, 8192)
     z = emb_model.encode(dummy)
     ae_emb_size = z.shape[1]
-    ae_ratio = 4096 // z.shape[-1]
+    ae_ratio = dummy.shape[-1] // z.shape[-1]
 
     print("using a codec with - compression ratio : ", ae_ratio,
           " - emb size : ", ae_emb_size)
@@ -133,7 +136,8 @@ def main(argv):
         gin.bind_parameter("diffusion.utils.get_datasets.freqs", FLAGS.freqs)
         gin.bind_parameter("diffusion.utils.get_datasets.use_cache",
                            FLAGS.use_cache)
-        gin.bind_parameter("diffusion.utils.get_datasets.max_samples", FLAGS.max_samples)
+        gin.bind_parameter("diffusion.utils.get_datasets.max_samples",
+                           FLAGS.max_samples)
 
     dataset, valset, train_sampler, val_sampler = get_datasets()
 

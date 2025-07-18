@@ -5,18 +5,15 @@ from typing import Callable, Iterable, Sequence, Tuple
 import pathlib
 
 
-def slakh(audio_path, midi_path, extensions, exclude):
+def slakh(audio_path, midi_path, extensions, exclude, include):
     tracks = [
         os.path.join(audio_path, subfolder)
         for subfolder in os.listdir(audio_path)
     ]
     meta = tracks[0] + "/metadata.yaml"
     ban_list = [
-        "Chromatic Percussion",
-        "Drums",
-        "Percussive",
-        "Sound Effects",
-        "Sound effects",
+        "Chromatic Percussion", "Drums", "Percussive", "Sound Effects",
+        "Sound effects", "Ethnic"
     ]
 
     instr = []

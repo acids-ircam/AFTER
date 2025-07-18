@@ -125,6 +125,38 @@ flags.DEFINE_multi_string('descriptors',
                           default=[],
                           help="Audio descriptors to compute")
 
+import torch.nn.functional as F
+from music2latent import EncoderDecoder
+
+
+class M2LWrapper():
+    """Wrapper for the EncoderDecoder model to use it with the AudioExample class."""
+
+    def __init__(self, device="cpu"):
+        self.model = EncoderDecoder(device=device)
+
+    def to(self, device):
+        self.model = EncoderDecoder(device=device)
+        return self
+
+    def cpu(self):
+        self.model = EncoderDecoder(device="cpu")
+        return self
+
+    def encode(self, x):
+        x = x.squeeze(1)
+        x_padded = F.pad(x, (0, 1536))  # pad left and right
+
+        return self.model.encode(x_padded)
+
+    def decode(self, z):
+        x = self.model.decode(z).unsqueeze(1)
+        x = x[..., :-1536]  # remove padding
+        return x
+
+    def __call__(self, x):
+        return self.decode(self.encode(x))
+
 
 def normalize_signal(x: np.ndarray,
                      max_gain_db: int = 30,
@@ -160,8 +192,12 @@ def main(dummy):
     device = "cuda:" + str(
         FLAGS.gpu) if torch.cuda.is_available() and FLAGS.gpu >= 0 else "cpu"
     print("Using device : ", device)
-    emb_model = None if FLAGS.emb_model_path is None else torch.jit.load(
-        FLAGS.emb_model_path).to(device).eval()
+
+    if FLAGS.emb_model_path == "music2latent":
+        emb_model = M2LWrapper(device=device)  #.eval()
+    else:
+        emb_model = None if FLAGS.emb_model_path is None else torch.jit.load(
+            FLAGS.emb_model_path).to(device).eval()
 
     env = lmdb.open(
         FLAGS.output_path,
@@ -197,10 +233,10 @@ def main(dummy):
         if FLAGS.waveform_augmentation == "shift_stretch":
             waveform_augmentation = PSTS(ts_min=0.76,
                                          ts_max=1.49,
-                                         pitch_min=-4,
-                                         pitch_max=4,
+                                         pitch_min=-6,
+                                         pitch_max=6,
                                          sr=FLAGS.sample_rate,
-                                         chunk_size=FLAGS.num_signal // 4,
+                                         chunk_size=FLAGS.num_signal // 6,
                                          random_silence=True)
 
         elif FLAGS.waveform_augmentation == "stretch":
