@@ -1,0 +1,165 @@
+from __gin__ import dynamic_registration
+
+
+import after
+from after import diffusion
+from cached_conv import convs
+
+IN_SIZE = None
+N_SIGNAL = None
+
+ZS_CHANNELS = 12
+ZT_CHANNELS = 6
+SR = 44100
+STRUCTURE_TYPE = "audio"
+PHASE_1_STEP = 100000
+MAX_STEPS = 1000000
+DISTILL_STEP = 1
+
+LOCAL_ATTENTION_SIZE = 8
+ATTENTION_CHUNK_SIZE = 4
+
+# Data
+diffusion.utils.collate_fn:
+    n_signal = %N_SIGNAL
+    structure_type = %STRUCTURE_TYPE
+
+### ARCHITECTURE ### 
+encoder/diffusion.networks.ecapa_encoder.ECAPATDNN:
+    attention_channels = 128
+    channels = [512, 512, 512, 1024]
+    dilations = [1, 1, 1, 1]
+    global_context = True
+    groups = [1, 1, 1, 1]
+    in_size = %IN_SIZE
+    kernel_sizes = [3, 3, 3, 3]
+    out_dim = %ZT_CHANNELS
+    pooling = True
+    res2net_scale = 8
+    se_channels = 128
+    spherical_normalisation = False
+    use_tanh = False
+    regularisation = "ac"
+
+
+encoder_time/diffusion.networks.Encoder1D:
+    in_size = %IN_SIZE
+    channels = [64, 128, 256, 512, %ZS_CHANNELS]
+    ratios = [1, 1, 1, 1]
+    use_tanh = False
+    average_out = False
+    upscale_out = False
+    spherical_normalization = False
+    vae_regularisation = False
+    ac_regularisation = True
+
+encoder_time/convs.get_padding.mode = 'causal'
+
+classifier/diffusion.networks.Encoder1D:
+    in_size = %ZS_CHANNELS
+    channels = [64, 64, 64, 64, %ZT_CHANNELS]
+    ratios = [1, 2, 2, 2, 1]
+    use_tanh = False
+    average_out = True
+    upscale_out = False
+
+generator/diffusion.networks.transformerv2.DenoiserV2:
+    n_channels = %IN_SIZE
+    seq_len = %N_SIGNAL   
+    embed_dim = 512
+    cond_dim = %ZT_CHANNELS
+    noise_embed_dims = 64
+    n_layers = 6
+    mlp_multiplier = 3
+    dropout  = 0.1
+    causal = True
+    tcond_dim = %ZS_CHANNELS
+    pos_emb_type = "rotary"
+    local_attention_size = %LOCAL_ATTENTION_SIZE
+    attention_chunk_size = %ATTENTION_CHUNK_SIZE
+
+
+discriminator/diffusion.networks.transformerv2.DenoiserV2:
+    n_channels = %IN_SIZE
+    seq_len = %N_SIGNAL   
+    embed_dim = 512
+    cond_dim = %ZT_CHANNELS
+    noise_embed_dims = 64
+    n_layers = 4
+    mlp_multiplier = 3
+    dropout  = 0.1
+    causal = True
+    tcond_dim = %ZS_CHANNELS
+    pos_emb_type = "rotary"
+    local_attention_size = %LOCAL_ATTENTION_SIZE
+    attention_chunk_size = %ATTENTION_CHUNK_SIZE
+    use_out_proj = False
+
+
+
+diffusion.networks.ConvDiscriminator:
+    in_channels = 512
+    channels=64
+    num_layers=3
+    kernel_size=4
+    stride=2
+    padding=1
+    loss_type="relativistic"
+    soft_clip_scale=None
+    channels_time_cond=%ZS_CHANNELS
+    channels_cond=%ZT_CHANNELS
+    cond_layers=2
+
+
+diffusion.model.Base:
+    sr = %SR
+    net= @generator/diffusion.networks.transformerv2.DenoiserV2()
+    encoder = @encoder/diffusion.networks.ecapa_encoder.ECAPATDNN()
+    encoder_time = @encoder_time/diffusion.networks.Encoder1D()    
+    classifier = @classifier/diffusion.networks.Encoder1D()
+    time_transform = None
+    drop_value = -4.
+    drop_rate = 0.2
+
+ 
+diffusion.model.Base.fit: 
+    max_steps = %MAX_STEPS
+    train_encoder = True
+    train_encoder_time = True
+
+    ## Adversarial
+    timbre_warmup = %PHASE_1_STEP
+    adversarial_warmup = 60000
+    stop_training_encoder_step = %PHASE_1_STEP
+    stop_training_encoder_time_step = %MAX_STEPS
+    update_classifier_every = 3
+    adversarial_loss = "cosine"
+    adversarial_weight = 0.075      
+
+    drop_targets = [0,1]
+
+    # Noise augmentation to smooth the latent space
+    zsem_noise_aug = 0.03
+    time_cond_noise_aug = 0.015
+
+    ## Encoder regularisation
+    regularisation_weight = 1
+    regularisation_warmup = 1
+
+    ## Cycle loss
+    cycle_consistency = False
+
+    ### DATA ###
+    shuffle_zsem = [4,8]
+
+    ## Log ## 
+    steps_valid = 10000
+    steps_save = 25000
+    
+    use_ema = True
+    lr = 1e-4
+
+    distill_step = %DISTILL_STEP
+    discriminator_pretrained_class = @discriminator/diffusion.networks.transformerv2.DenoiserV2
+    discriminator_head_class = @diffusion.networks.ConvDiscriminator
+

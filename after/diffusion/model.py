@@ -9,6 +9,7 @@ import numpy as np
 import gin
 from torch_ema import ExponentialMovingAverage
 import os
+from after.diffusion import LatentDiscriminator
 
 from einops import reduce, rearrange
 import warnings
@@ -174,6 +175,20 @@ class Base(nn.Module):
             }
 
             torch.save(d, model_dir + "/checkpoint" + str(self.step) + ".pt")
+            
+    def sample_pdisc(self, num_samples, mu=0.0, sigma=1.0):
+        """
+        Samples from the shifted logit-normal distribution.
+        Returns values in (0, 1).
+        """
+        normal = torch.randn(num_samples) * sigma + mu
+        s = torch.sigmoid(normal)
+        return s
+
+    def sample_pgen(self, num_samples, max_logsnr=2, min_logsnr = -5):
+        t = 1-torch.sigmoid(-(torch.rand(num_samples) * (max_logsnr - min_logsnr) + min_logsnr))
+        return t
+
 
     @gin.configurable
     def fit(self,
@@ -209,7 +224,10 @@ class Base(nn.Module):
             update_classifier_every=2,
             load_encoders=[True, True, True],
             zsem_noise_aug=0.,
-            time_cond_noise_aug=0.):
+            time_cond_noise_aug=0.,
+            distill_step = None,
+            discriminator_pretrained_class = None,
+            discriminator_head_class = None):
 
         self.train_encoder = train_encoder
         self.train_encoder_time = train_encoder_time
@@ -260,6 +278,8 @@ class Base(nn.Module):
             n_epochs = n_epochs - restart_step // len(dataloader)
         losses_sum = {}
         losses_sum_count = {}
+        
+        distill_init = False
 
         with open(os.path.join(model_dir, "config.gin"), "w") as config_out:
             config_out.write(gin.operative_config_str())
@@ -338,7 +358,68 @@ class Base(nn.Module):
                         drop_rate=self.drop_rate)
 
                 # Adversarial step
-                if self.step > timbre_warmup and not (
+                
+                if distill_step is not None and self.step>distill_step:
+                    if distill_init is False:
+                        
+                        print("Initialisation of one-step refinement")
+                        
+                        discriminator_head = discriminator_head_class()
+                        discriminator_pretrained = discriminator_pretrained_class()
+                        discriminator_pretrained.load_state_dict(self.net.state_dict(), strict = False)
+                        
+                        self.discriminator = LatentDiscriminator(discriminator_head = discriminator_head, pretrained_net = discriminator_pretrained)
+                        self.discriminator_opt = AdamW(params, lr=lr, betas=(0.9, 0.999))
+                        distill_init = True
+                    
+                        
+                        
+                    # Make a onestep generation 
+                    x0 = torch.randn_like(x1)
+                    # t = torch.rand(x0.size(0), 1, 1).to(self.device)
+                    t = self.sample_pgen(x0.size(0)).reshape(-1,1,1).to(self.device)
+                    
+                    interpolant = (1 - t) * x0 + t * x1
+                    model_output = self.net(interpolant,
+                                time_cond=time_cond,
+                                cond=cond,
+                                time=t)
+                    
+                    x_onestep = interpolant + (1 - t) * model_output
+            
+    
+                    # Renoise before passing to discriminator
+                    # t_renoise = torch.rand(x0.size(0), 1, 1).to(self.device)
+                    t_renoise = self.sample_pdisc(x0.size(0)).reshape(-1,1,1).to(self.device)
+                    
+                    x0_renoise = torch.randn_like(x1)
+                    x_onestep_renoised = (1 - t_renoise) * x0_renoise + t_renoise * x_onestep
+                    
+                    x0_renoise_x1 = torch.randn_like(x1)
+                    x1_renoise = (1 - t_renoise) * x0_renoise_x1 + t_renoise * x1
+                    
+                    losses = self.discriminator.loss(reals=x1_renoise,fakes = x_onestep_renoised,  time = t_renoise, cond_reals=cond, time_cond_reals=time_cond,cond_fakes=cond, time_cond_fakes=time_cond)
+                    loss_dis = losses["loss_dis"]
+                    loss_adv = losses["loss_adv"]
+                        
+                    if not self.step%2:
+                        self.opt.zero_grad()
+                        loss_dis.backward()
+                        # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 10.0)
+                        self.opt.step()
+                        
+                    else:
+                        self.opt.zero_grad()
+                        loss_adv.backward()
+                        # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 10.0)
+                        self.opt.step()
+                
+                    lossdict = {
+                        "Distill/loss_dis": loss_dis.item(),
+                        "Distill/loss_adv": loss_adv.item(),
+                    }
+                
+                elif self.step > timbre_warmup and not (
                         self.step % update_classifier_every
                         == 0) and self.classifier is not None:
 

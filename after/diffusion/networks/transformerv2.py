@@ -376,7 +376,8 @@ class DenoiserTransBlock(nn.Module):
                  is_causal: bool = True,
                  pos_emb_type: str = "learnable",
                  local_attention_size: Optional[int] = None,
-                 attention_chunk_size: int = 4):
+                 attention_chunk_size: int = 4,
+                 use_out_proj = True):
         super().__init__()
         self.n_channels = n_channels
         self.embed_dim = embed_dim
@@ -427,8 +428,11 @@ class DenoiserTransBlock(nn.Module):
         ])
 
         self.rearrange2 = Rearrange("b t c -> b c t", )
-        self.out_proj = nn.Sequential(nn.Linear(self.embed_dim, n_channels),
-                                      self.rearrange2)
+        if use_out_proj:
+            self.out_proj = nn.Sequential(nn.Linear(self.embed_dim, n_channels),
+                                        self.rearrange2)
+        else:
+            self.out_proj = self.rearrange2
 
     def roll_cache(self, size: int, cache_index: int):
         for block in self.decoder_blocks:
@@ -473,7 +477,8 @@ class DenoiserV2(nn.Module):
                  causal: bool = False,
                  pos_emb_type="learnable",
                  local_attention_size: Optional[int] = None,
-                 attention_chunk_size: int = 4):
+                 attention_chunk_size: int = 4,
+                 use_out_proj = True):
 
         super().__init__()
         self.noise_embed_dims = noise_embed_dims
@@ -505,7 +510,8 @@ class DenoiserV2(nn.Module):
             is_causal=causal,
             pos_emb_type=pos_emb_type,
             attention_chunk_size=attention_chunk_size,
-            local_attention_size=local_attention_size)
+            local_attention_size=local_attention_size,
+            use_out_proj=use_out_proj)
 
     @property
     def name(self):
