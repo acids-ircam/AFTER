@@ -95,8 +95,6 @@ discriminator/diffusion.networks.transformerv2.DenoiserV2:
     attention_chunk_size = %ATTENTION_CHUNK_SIZE
     use_out_proj = False
 
-
-
 diffusion.networks.ConvDiscriminator:
     in_channels = 512
     channels=64

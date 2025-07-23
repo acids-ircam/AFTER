@@ -125,8 +125,20 @@ def prepare_training(encoder, dataset, num_examples, device="cpu"):
             data = curdataset[idx]
             z = data["z"][..., :N_SIGNAL]
             z = torch.from_numpy(z).unsqueeze(0).float().to(device)
-            label = name
+
             zsem = encoder(z)
+
+            path = data["metadata"]["path"]
+            if "pads" in path.lower():
+                label = "PADS"
+            elif "drums" in path.lower():
+                label = "Drums"
+            elif "fx" in path.lower():
+                label = "FX"
+            elif "tonal" in path.lower():
+                label = "Tonal"
+            else:
+                label = "None"
 
             zsem = zsem.detach().cpu().numpy().squeeze()
             allzsem.append(zsem)

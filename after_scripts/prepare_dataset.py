@@ -8,7 +8,7 @@ from after.dataset.audio_example import AudioExample
 from after.dataset.parsers import get_parser
 import os
 from tqdm import tqdm
-from after.dataset.transforms import BasicPitchPytorch, PSTS, AudioDescriptors, BeatTrack
+from after.dataset.transforms import BasicPitchPytorch, PSTS, AudioDescriptors, BeatTrack, is_monophonic_midi, midi_to_monophonic
 import pickle
 import pretty_midi
 from absl import app, flags
@@ -71,9 +71,7 @@ flags.DEFINE_integer('sample_rate',
                      44100,
                      help='Sampling rate to use during training')
 
-flags.DEFINE_integer('db_size',
-                     200,
-                     help='Maximum size (in GB) of the dataset')
+flags.DEFINE_integer('db_size', 40, help='Maximum size (in GB) of the dataset')
 
 flags.DEFINE_string(
     'emb_model_path',
@@ -106,6 +104,8 @@ flags.DEFINE_bool('beat_track',
                   False,
                   help='Use beat tracking to extract beats and downbats',
                   required=False)
+flags.DEFINE_bool('test_mono', False, help='', required=False)
+flags.DEFINE_bool('make_mono', False, help='', required=False)
 
 flags.DEFINE_string(
     'waveform_augmentation',
@@ -114,8 +114,13 @@ flags.DEFINE_string(
     "Perform data augmentation for the timbre input : [none, shift, stretch, shift_stretch]"
 )
 
+flags.DEFINE_bool('augmentation_stacking',
+                  True,
+                  help='Stack the augmentations for same example',
+                  required=False)
+
 flags.DEFINE_integer('num_augments',
-                     default=4,
+                     default=3,
                      help="Number of augmentations to perform")
 
 flags.DEFINE_integer('num_multiprocesses',
@@ -124,6 +129,9 @@ flags.DEFINE_integer('num_multiprocesses',
 flags.DEFINE_multi_string('descriptors',
                           default=[],
                           help="Audio descriptors to compute")
+flags.DEFINE_integer('ae_ratio',
+                     default=None,
+                     help="Ae ratio for descriptors and beat_tracking")
 
 import torch.nn.functional as F
 from music2latent import EncoderDecoder
@@ -188,6 +196,35 @@ def get_midi(midi_data, chunk_number):
     return False, midi_data
 
 
+import torch
+import random
+
+
+def random_mix_sum(buffer, num_outputs=2):
+    """
+    Given a buffer of shape (N, B, C, T), return `num_outputs` tensors
+    where each is the sum of 2 or 3 randomly chosen (without replacement) entries from N.
+
+    Args:
+        buffer (torch.Tensor): Shape (N, B, C, T)
+        num_outputs (int): How many mixed samples to return
+
+    Returns:
+        List[torch.Tensor]: List of shape [B, C, T] tensors
+    """
+    N = buffer.shape[0]
+    indices = list(range(N))
+    results = []
+
+    for _ in range(num_outputs):
+        k = random.choice([2, 3])  # sum 2 or 3 items
+        selected = random.sample(indices, k)
+        mixed = buffer[selected].sum(dim=0)
+        results.append(mixed)
+
+    return results
+
+
 def main(dummy):
     device = "cuda:" + str(
         FLAGS.gpu) if torch.cuda.is_available() and FLAGS.gpu >= 0 else "cpu"
@@ -231,12 +268,12 @@ def main(dummy):
 
     else:
         if FLAGS.waveform_augmentation == "shift_stretch":
-            waveform_augmentation = PSTS(ts_min=0.76,
-                                         ts_max=1.49,
+            waveform_augmentation = PSTS(ts_min=0.5,
+                                         ts_max=1.5,
                                          pitch_min=-6,
                                          pitch_max=6,
                                          sr=FLAGS.sample_rate,
-                                         chunk_size=FLAGS.num_signal // 6,
+                                         chunk_size=FLAGS.num_signal // 8,
                                          random_silence=True)
 
         elif FLAGS.waveform_augmentation == "stretch":
@@ -263,8 +300,8 @@ def main(dummy):
     if len(FLAGS.descriptors) > 0:
         waveform_descriptors = AudioDescriptors(sr=FLAGS.sample_rate,
                                                 descriptors=FLAGS.descriptors,
-                                                hop_length=512,
-                                                n_fft=2048)
+                                                hop_length=2048,
+                                                n_fft=8192)
         if waveform_pool is None:
             waveform_pool = Pool(FLAGS.num_multiprocesses)
 
@@ -319,8 +356,11 @@ def main(dummy):
                 midi_data = pretty_midi.PrettyMIDI(midi_file)
 
             elif midi_file is None and FLAGS.basic_pitch_midi:
-                midi_data = BP(audio)
-
+                try:
+                    midi_data = BP(audio)
+                except:
+                    midi_data = None
+                    print("Error processing audio with BasicPitch")
             else:
                 midi_data = None
 
@@ -331,14 +371,37 @@ def main(dummy):
             for j, chunk in enumerate(chunks):
                 # Chunk the midi
                 if midi_data is not None:
-                    silence_test, midi = get_midi(copy.deepcopy(midi_data),
-                                                  chunk_number=chunk_index)
+                    try:
+                        silence_test, midi = get_midi(copy.deepcopy(midi_data),
+                                                      chunk_number=chunk_index)
+                        if not silence_test:
+                            if ("medley" in FLAGS.input_path
+                                    and metadata["instrument"]
+                                    == "violin") or FLAGS.test_mono:
+                                if is_monophonic_midi(midi):
+                                    # print("monophonic")
+                                    pass
+                                else:
+                                    # print(
+                                    #     "Non-monophonic midi detected, skipping"
+                                    # )
+                                    silence_test = True
+
+                            if FLAGS.make_mono:
+                                midi = midi_to_monophonic(midi)
+                    except Exception as e:
+                        print(e)
+                        silence_test = True
+                        midi = None
+                        print("Error processing midi file : ", midi_file)
+
                 else:
                     midi = None
                     silence_test = np.max(
                         abs(chunk)) < 0.05 if FLAGS.cut_silences else False
 
                 # don't process buffer if empty slice
+
                 if silence_test:
                     chunk_index += 1
                     continue
@@ -349,6 +412,31 @@ def main(dummy):
 
                 if len(chunks_buffer) == FLAGS.batch_size or (
                         j == len(chunks) - 1 and i == len(audio_files) - 1):
+
+                    # Audio descriptors
+                    features = {}
+                    if len(FLAGS.descriptors) > 0:
+                        descriptors_buffers = waveform_pool.map(
+                            partial(waveform_descriptors,
+                                    z_length=chunks_buffer[0].shape[-1] //
+                                    FLAGS.ae_ratio), chunks_buffer)
+
+                        for k in descriptors_buffers[0]:
+                            features[k] = [d[k] for d in descriptors_buffers]
+
+                    if FLAGS.beat_track:
+                        beat_data = [
+                            beat_tracker(chunk,
+                                         z_length=chunks_buffer[0].shape[-1] //
+                                         FLAGS.ae_ratio)
+                            for chunk in chunks_buffer
+                        ]
+                        features["beat_clock"] = [
+                            b["beat_clock"] for b in beat_data
+                        ]
+                        features["downbeat_clock"] = [
+                            b["downbeat_clock"] for b in beat_data
+                        ]
 
                     if emb_model is not None:
                         chunks_buffer_torch = torch.from_numpy(
@@ -361,53 +449,52 @@ def main(dummy):
                         # Data augmentations for the timbre
                         if waveform_augmentation is not None:
                             augments = {}
+                            augmented_audio_buffers = []
                             for i in range(FLAGS.num_augments):
                                 augmented_buffers = waveform_pool.map(
                                     waveform_augmentation, chunks_buffer)
+
                                 augmented_buffers_torch = [
                                     torch.from_numpy(a).reshape(1, 1,
                                                                 -1).to(device)
                                     for a in augmented_buffers
                                 ]
-                                z_augmented = [
-                                    emb_model.encode(
-                                        a).squeeze().cpu().numpy()
-                                    for a in augmented_buffers_torch
-                                ]
+                                augmented_buffers_torch = torch.cat(
+                                    augmented_buffers_torch, dim=0)
+
+                                z_augmented = emb_model.encode(
+                                    augmented_buffers_torch).squeeze().cpu(
+                                    ).numpy()
+
                                 augments["augment_" +
                                          FLAGS.waveform_augmentation + "_" +
                                          str(i)] = z_augmented
+
+                                augmented_audio_buffers.append(
+                                    augmented_buffers_torch)
+
+                            if FLAGS.augmentation_stacking:
+                                # Stack the augmentations
+                                augmented_audio_buffers = torch.stack(
+                                    augmented_audio_buffers, dim=0)
+                                stacked_audio_buffers = random_mix_sum(
+                                    augmented_audio_buffers, num_outputs=3)
+
+                                for j in range(len(stacked_audio_buffers)):
+                                    z_stacked = emb_model.encode(
+                                        stacked_audio_buffers[j]).squeeze(
+                                        ).cpu().numpy()
+
+                                    augments["augment_" +
+                                             FLAGS.waveform_augmentation +
+                                             "_stacked_" + str(j)] = z_stacked
+
                         else:
                             augments = None
-
-                        # Audio descriptors
-                        features = {}
-                        if len(FLAGS.descriptors) > 0:
-                            descriptors_buffers = waveform_pool.map(
-                                partial(waveform_descriptors,
-                                        z_length=z.shape[-1]), chunks_buffer)
-                            for k in descriptors_buffers[0]:
-                                features[k] = [
-                                    d[k] for d in descriptors_buffers
-                                ]
-
-                        # Beat tracking
-                        if FLAGS.beat_track:
-                            beat_data = [
-                                beat_tracker(chunk, z_length=z.shape[-1])
-                                for chunk in chunks_buffer
-                            ]
-                            features["beat_clock"] = [
-                                b["beat_clock"] for b in beat_data
-                            ]
-                            features["downbeat_clock"] = [
-                                b["downbeat_clock"] for b in beat_data
-                            ]
 
                     else:
                         z = [None] * len(chunks_buffer)
                         augments = None
-                        features = None
 
                     for k, (array, curz, midi, cur_metadata) in enumerate(
                             zip(chunks_buffer, z, midis, metadatas_buffer)):
@@ -441,9 +528,8 @@ def main(dummy):
                                              augmented_buffers[k],
                                              dtype=np.float32)
 
-                        if features is not None:
-                            for key, descr in features.items():
-                                ae.put_array(key, descr[k], dtype=np.float32)
+                        for key, descr in features.items():
+                            ae.put_array(key, descr[k], dtype=np.float32)
 
                         key = f"{cur_index:08d}"
 

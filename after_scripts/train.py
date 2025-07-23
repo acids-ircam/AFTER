@@ -41,6 +41,10 @@ flags.DEFINE_integer("max_samples", None, "Maximum number of samples.")
 flags.DEFINE_integer("num_workers", 0, "Number of workers.")
 flags.DEFINE_multi_string("augmentation_keys", ["all"],
                           "List of augmentation keys.")
+flags.DEFINE_multi_string("filter_include", [],
+                          "Keyword to include based on file path")
+flags.DEFINE_multi_string("filter_exclude", [],
+                          "Keyword to exclude based on file path")
 
 flags.DEFINE_bool("use_validation", True, "Use a train/validation split")
 
@@ -69,10 +73,10 @@ def main(argv):
 
     ######### BUILD MODEL #########
     if FLAGS.emb_model_path == "music2latent":
-        emb_model = M2LWrapper(device="cpu")
+        emb_model = M2LWrapper(device=device)
     else:
-        emb_model = torch.jit.load(FLAGS.emb_model_path).cpu()
-    dummy = torch.randn(1, 1, 8192)
+        emb_model = torch.jit.load(FLAGS.emb_model_path)  #.to(device)
+    dummy = torch.randn(1, 1, 8192)  #.to(device)
     z = emb_model.encode(dummy)
     ae_emb_size = z.shape[1]
     ae_ratio = dummy.shape[-1] // z.shape[-1]
@@ -109,6 +113,8 @@ def main(argv):
     ## DATASET
     augmentation_keys = FLAGS.augmentation_keys
 
+    filter = {"include": FLAGS.filter_include, "exclude": FLAGS.filter_exclude}
+
     if augmentation_keys == ["all"]:
         dataset = SimpleDataset(path=FLAGS.db_path[0])
         allkeys = dataset.get_keys()
@@ -138,10 +144,11 @@ def main(argv):
                            FLAGS.use_cache)
         gin.bind_parameter("diffusion.utils.get_datasets.max_samples",
                            FLAGS.max_samples)
+        gin.bind_parameter("diffusion.utils.get_datasets.filter", filter)
 
     dataset, valset, train_sampler, val_sampler = get_datasets()
 
-    # else:
+    # else
     #     dataset = SimpleDataset(path=FLAGS.db_path[0],
     #                             keys=data_keys,
     #                             max_samples=FLAGS.max_samples,

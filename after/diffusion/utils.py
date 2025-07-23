@@ -16,7 +16,7 @@ def normalize(array):
 
 
 @gin.configurable
-def get_datasets(path_dict, data_keys, freqs, use_cache, max_samples):
+def get_datasets(path_dict, data_keys, freqs, use_cache, max_samples, filter):
 
     dataset = CombinedDataset(
         path_dict=path_dict,
@@ -25,6 +25,7 @@ def get_datasets(path_dict, data_keys, freqs, use_cache, max_samples):
         config="train",
         init_cache=use_cache,
         num_samples=max_samples,
+        filter=filter,
     )
 
     train_sampler = dataset.get_sampler()
@@ -36,6 +37,7 @@ def get_datasets(path_dict, data_keys, freqs, use_cache, max_samples):
         keys=data_keys,
         init_cache=use_cache,
         num_samples=max_samples,
+        filter=filter,
     )
     val_sampler = valset.get_sampler()
     return dataset, valset, train_sampler, val_sampler

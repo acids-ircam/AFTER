@@ -4,8 +4,79 @@ import yaml
 from typing import Callable, Iterable, Sequence, Tuple
 import pathlib
 
+import os
+import yaml
+import random
+from tqdm import tqdm
+
 
 def slakh(audio_path, midi_path, extensions, exclude, include):
+    tracks = [
+        os.path.join(audio_path, subfolder)
+        for subfolder in os.listdir(audio_path)
+    ]
+
+    ban_list = [
+        "Chromatic Percussion", "Drums", "Percussive", "Sound Effects",
+        "Sound effects", "Ethnic"
+    ]
+
+    instr = []
+    stem_list = []
+    metadata = []
+    total_stems = 0
+
+    for trackfolder in tqdm(tracks):
+        try:
+            meta = trackfolder + "/metadata.yaml"
+            with open(meta, "r") as file:
+                d = yaml.safe_load(file)
+
+            for k, stem in d["stems"].items():
+                inst = stem["inst_class"]
+                total_stems += 1
+
+                if inst in ban_list:
+                    continue
+
+                # Apply instrument-specific filtering
+                if inst == "Bass" and random.random() > 0.25:
+                    continue
+                if inst == "Guitar" and random.random() > 0.5:
+                    continue
+
+                stem_path = os.path.join(trackfolder, "stems", f"{k}.flac")
+                stem_list.append(stem_path)
+                instr.append(inst)
+                metadata.append(stem)
+
+        except Exception as e:
+            print("Ignoring reading folder:", trackfolder, "| Error:", e)
+            continue
+
+    print("\nRemaining instruments:", set(instr))
+    print(f"{total_stems} stems in total")
+    print(f"{len(stem_list)} stems retained")
+
+    # Final audio + metadata
+    audios = stem_list
+    metadatas = [{
+        "path": audio,
+        "instrument": inst
+    } for audio, inst in zip(audios, instr)]
+
+    # MIDI path construction
+    def get_midi_from_path(audio_path):
+        split = audio_path.split("/")
+        split[-2] = "MIDI"
+        midi_path = "/".join(split)[:-5] + ".mid"
+        return midi_path
+
+    midis = [get_midi_from_path(audio) for audio in audios]
+    return audios, midis, metadatas
+
+
+def slakh_old(audio_path, midi_path, extensions, exclude, include):
     tracks = [
         os.path.join(audio_path, subfolder)
         for subfolder in os.listdir(audio_path)
@@ -36,6 +107,7 @@ def slakh(audio_path, midi_path, extensions, exclude, include):
             continue
 
     print(set(instr), "instruments remaining")
+
     print(total_stems, "stems in total")
     print(len(stem_list), "stems retained")
 
@@ -155,14 +227,133 @@ def vital_parser(audio_folder, midi_folder, extensions, exclude):
     return audio_files, midis, metadatas
 
 
+def medley_solos(audio_folder, midi_folder, extensions, exclude, include,
+                 csv_data):
+    audio_files = search_for_audios([audio_folder], extensions=extensions)
+    audio_files = map(str, audio_files)
+    audio_files = map(os.path.abspath, audio_files)
+    audio_files = [*audio_files]
+
+    audio_files = [
+        f for f in audio_files if not any([excl in f for excl in exclude])
+    ]
+
+    if include is not None:
+        audio_files = [
+            f for f in audio_files
+            if any([incl.lower() in f.lower() for incl in include])
+        ]
+
+    metadatas = []
+    for file in audio_files:
+        uuid = file.split("_")[-1][:-4]
+        instrument = csv_data[csv_data["uuid4"] == uuid]["instrument"]
+        metadatas.append({"path": file, "instrument": instrument.values[0]})
+
+    midi_files = [None] * len(audio_files)
+    print(len(metadatas), " files found")
+    return audio_files, midi_files, metadatas
+
+
+def medley_solos_mono(audio_folder, midi_folder, extensions, exclude, include,
+                      csv_data):
+    audio_files = search_for_audios([audio_folder], extensions=extensions)
+    audio_files = map(str, audio_files)
+    audio_files = map(os.path.abspath, audio_files)
+    audio_files = [*audio_files]
+
+    audio_files = [
+        f for f in audio_files if not any([excl in f for excl in exclude])
+    ]
+
+    if include is not None:
+        audio_files = [
+            f for f in audio_files
+            if any([incl.lower() in f.lower() for incl in include])
+        ]
+
+    metadatas = []
+    out_files = []
+    for file in audio_files:
+        uuid = file.split("_")[-1][:-4]
+        instrument = csv_data[csv_data["uuid4"] ==
+                              uuid]["instrument"].values[0]
+        if instrument.lower() in ["piano", "distorted electric guitar"]:
+            continue
+        else:
+            metadatas.append({"path": file, "instrument": instrument})
+            out_files.append(file)
+
+    midi_files = [None] * len(out_files)
+    print(len(metadatas), " files found")
+
+    from collections import Counter
+    instrument_counts = Counter(md["instrument"] for md in metadatas)
+    print("\nInstrument distribution:")
+    for instr, count in sorted(instrument_counts.items(), key=lambda x: -x[1]):
+        print(f"{instr:25s}: {count}")
+
+    return out_files, midi_files, metadatas
+
+
+import json
+
+
+def slakh_files(*args, **kwargs):
+
+    path = "/data/nils/datasets/instruments/slakh.json"
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    audio_files, midi_files, metadatas = [], [], []
+    for entry in data:
+        audio_files.append(entry["audio"])
+        midi_files.append(entry["midi"])
+        metadatas.append(entry["metadata"])
+    return audio_files, midi_files, metadatas
+
+
+def other_files(*args, **kwargs):
+
+    path = "/data/nils/datasets/instruments/other.json"
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    audio_files, midi_files, metadatas = [], [], []
+    for entry in data:
+        audio_files.append(entry["audio"])
+        midi_files.append(entry["midi"])
+        metadatas.append(entry["metadata"])
+    return audio_files, midi_files, metadatas
+
+
 def get_parser(parser_name):
     if parser_name == "simple_audio":
         return simple_audio
+    elif parser_name == "slakh_files":
+        return slakh_files
+    elif parser_name == "other_files":
+        return other_files
     elif parser_name == "simple_midi":
         return simple_midi
-    if parser_name == "slakh":
+    elif parser_name == "slakh":
         return slakh
-    if parser_name == "vital_parser":
+    elif parser_name == "vital_parser":
         return vital_parser
+    elif parser_name == "medley_solos":
+        import pandas as pd
+        csv_data = pd.read_csv(
+            '/data/nils/datasets/instruments/medley_solos/Medley-solos-DB_metadata.csv'
+        )
+        return lambda audio_folder, midi_folder, extensions, exclude, include: medley_solos(
+            audio_folder, midi_folder, extensions, exclude, include, csv_data)
+
+    elif parser_name == "medley_solos_mono":
+        import pandas as pd
+        csv_data = pd.read_csv(
+            '/data/nils/datasets/instruments/medley_solos/Medley-solos-DB_metadata.csv'
+        )
+        return lambda audio_folder, midi_folder, extensions, exclude, include: medley_solos_mono(
+            audio_folder, midi_folder, extensions, exclude, include, csv_data)
     else:
         raise ValueError(f"Parser {parser_name} not available")

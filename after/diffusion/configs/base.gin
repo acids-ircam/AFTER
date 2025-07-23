@@ -5,6 +5,7 @@ import after
 from after import diffusion
 from cached_conv import convs
 
+
 IN_SIZE = None
 N_SIGNAL = None
 
@@ -15,7 +16,7 @@ STRUCTURE_TYPE = "audio"
 PHASE_1_STEP = 100000
 MAX_STEPS = 1000000
 
-LOCAL_ATTENTION_SIZE = 8
+LOCAL_ATTENTION_SIZE = 16
 ATTENTION_CHUNK_SIZE = 4
 
 # Data
@@ -57,7 +58,7 @@ encoder_time/convs.get_padding.mode = 'causal'
 classifier/diffusion.networks.Encoder1D:
     in_size = %ZS_CHANNELS
     channels = [64, 64, 64, 64, %ZT_CHANNELS]
-    ratios = [1, 2, 2, 2, 1]
+    ratios = [2, 2, 2, 1, 1]
     use_tanh = False
     average_out = True
     upscale_out = False
@@ -96,12 +97,12 @@ diffusion.model.Base.fit:
 
     ## Adversarial
     timbre_warmup = %PHASE_1_STEP
-    adversarial_warmup = 10000
+    adversarial_warmup = 25000
     stop_training_encoder_step = %PHASE_1_STEP
     stop_training_encoder_time_step = %MAX_STEPS
     update_classifier_every = 3
     adversarial_loss = "cosine"
-    adversarial_weight = 0.1      
+    adversarial_weight = 0.05     
 
     drop_targets = [0,1]
 
@@ -117,7 +118,7 @@ diffusion.model.Base.fit:
     cycle_consistency = False
 
     ### DATA ###
-    shuffle_zsem = [2, 4]
+    shuffle_zsem = [2]
 
     ## Log ## 
     steps_valid = 10000

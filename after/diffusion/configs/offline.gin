@@ -119,7 +119,7 @@ diffusion.model.Base.fit:
     cycle_consistency = False
 
     ### DATA ###
-    shuffle_zsem = [2,4,8]
+    shuffle_zsem = [1]
 
     ## Log ## 
     steps_valid = 10000

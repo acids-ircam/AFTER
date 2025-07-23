@@ -2,13 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def get_relativistic_losses(score_real, score_fake):
     diff = score_real - score_fake
-    dis_loss = F.softplus(-diff).mean()
-    gen_loss = F.softplus(diff).mean()
+    dis_loss = F.softplus(-diff).mean(dim=-1)
+    gen_loss = F.softplus(diff).mean(dim=-1)
     return dis_loss, gen_loss
 
+
 class AdaLN(nn.Module):
+
     def __init__(self, normalized_shape, cond_dim, time_cond_dim):
         super().__init__()
         self.norm = nn.GroupNorm(num_groups=32, num_channels=normalized_shape)
@@ -19,8 +22,14 @@ class AdaLN(nn.Module):
         if self.has_cond:
             self.cond_proj = nn.Linear(cond_dim, 2 * normalized_shape)
         if self.has_time_cond:
-            self.time_cond_proj = nn.Conv1d(time_cond_dim, 2 * normalized_shape, kernel_size=1)
-            self.time_cond_downscale = nn.Conv1d(time_cond_dim,  time_cond_dim, kernel_size=3, stride = 2, padding = 1)
+            self.time_cond_proj = nn.Conv1d(time_cond_dim,
+                                            2 * normalized_shape,
+                                            kernel_size=1)
+            self.time_cond_downscale = nn.Conv1d(time_cond_dim,
+                                                 time_cond_dim,
+                                                 kernel_size=3,
+                                                 stride=2,
+                                                 padding=1)
 
     def forward(self, x, cond=None, time_cond=None):
         # x: (B, C, T)
@@ -43,12 +52,20 @@ class AdaLN(nn.Module):
             shift += t_shift
 
         return x_normed * scale + shift, time_cond
-    
-    
+
+
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=4, stride=2, padding=1, norm = None):
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 kernel_size=4,
+                 stride=2,
+                 padding=1,
+                 norm=None):
         super().__init__()
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, stride, padding)
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size, stride,
+                              padding)
         self.norm = norm
         self.act = nn.SiLU()
 
@@ -57,12 +74,14 @@ class ConvBlock(nn.Module):
         if isinstance(self.norm, AdaLN):
             # If AdaLN, pass time_cond and cond
             x, time_cond = self.norm(x, cond=cond, time_cond=time_cond)
-        else:   
+        else:
             x = self.norm(x)
         x = self.act(x)
         return x, time_cond
 
+
 class ConvDiscriminator(nn.Module):
+
     def __init__(
         self,
         in_channels,
@@ -87,63 +106,92 @@ class ConvDiscriminator(nn.Module):
         current_channels = in_channels
 
         for i in range(num_layers):
-            
-            if i < self.cond_layers and (channels_time_cond > 0 or channels_cond > 0):
-                norm = AdaLN(channels, cond_dim=channels_cond, time_cond_dim=channels_time_cond)
+
+            if i < self.cond_layers and (channels_time_cond > 0
+                                         or channels_cond > 0):
+                norm = AdaLN(channels,
+                             cond_dim=channels_cond,
+                             time_cond_dim=channels_time_cond)
             else:
                 norm = nn.GroupNorm(num_groups=32, num_channels=channels)
 
-            layers.append(ConvBlock(in_channels=current_channels,
-                                    out_channels=channels,
-                                    kernel_size=kernel_size,
-                                    stride=stride,
-                                    padding=padding,
-                                    norm = norm))
+            layers.append(
+                ConvBlock(in_channels=current_channels,
+                          out_channels=channels,
+                          kernel_size=kernel_size,
+                          stride=stride,
+                          padding=padding,
+                          norm=norm))
             current_channels = channels
-            
 
         # Final projection
-        self.out_projection = nn.Conv1d(current_channels, 1, kernel_size=kernel_size, stride=1, padding=0)
+        self.out_projection = nn.Conv1d(current_channels,
+                                        1,
+                                        kernel_size=kernel_size,
+                                        stride=1,
+                                        padding=0)
 
         self.layers = nn.ModuleList(layers)
 
     def forward(self, x, cond=None, time_cond=None):
-        
-        
+
         for block in self.layers:
-            x, time_cond  = block(x, time_cond, cond)
-        
+            x, time_cond = block(x, time_cond, cond)
+
         return self.out_projection(x)
 
-
-    def loss(self, reals, fakes, cond_reals=None, time_cond_reals=None, cond_fakes=None, time_cond_fakes=None):
+    def loss(self,
+             reals,
+             fakes,
+             cond_reals=None,
+             time_cond_reals=None,
+             cond_fakes=None,
+             time_cond_fakes=None):
         real_scores = self(reals, cond=cond_reals, time_cond=time_cond_reals)
         fake_scores = self(fakes, cond=cond_fakes, time_cond=time_cond_fakes)
 
         if self.loss_type == "lsgan":
-            loss_dis = torch.mean(fake_scores ** 2) + torch.mean((1 - real_scores) ** 2)
-            loss_adv = torch.mean((1 - fake_scores) ** 2)
+            loss_dis = torch.mean(fake_scores**2) + torch.mean(
+                (1 - real_scores)**2)
+            loss_adv = torch.mean((1 - fake_scores)**2)
         elif self.loss_type == "relativistic":
-            loss_dis, loss_adv = get_relativistic_losses(real_scores, fake_scores)
+            loss_dis, loss_adv = get_relativistic_losses(
+                real_scores, fake_scores)
         else:
             raise ValueError(f"Unsupported loss type: {self.loss_type}")
 
-        return {
-            "loss_dis": loss_dis,
-            "loss_adv": loss_adv
-        }
-        
-        
+        return {"loss_dis": loss_dis, "loss_adv": loss_adv}
+
+
 class LatentDiscriminator(nn.Module):
+
     def __init__(self, discriminator_head, pretrained_net):
         super().__init__()
         self.pretrained_net = pretrained_net
         self.discriminator = discriminator_head
-        
-    def loss(self, reals, fakes, time, cond_reals=None, time_cond_reals=None, cond_fakes=None, time_cond_fakes=None):
-        
-        reals = self.pretrained_net(x = reals, time = time, cond=cond_reals, time_cond = time_cond_reals)
-        fakes = self.pretrained_net(x = fakes, time = time, cond = cond_fakes, time_cond = time_cond_fakes)
-        
-        losses = self.discriminator.loss(reals, fakes, cond_reals=cond_reals, time_cond_reals=time_cond_reals,cond_fakes=cond_fakes, time_cond_fakes=time_cond_fakes)
+
+    def loss(self,
+             reals,
+             fakes,
+             time,
+             cond_reals=None,
+             time_cond_reals=None,
+             cond_fakes=None,
+             time_cond_fakes=None):
+
+        reals = self.pretrained_net(x=reals,
+                                    time=time,
+                                    cond=cond_reals,
+                                    time_cond=time_cond_reals)
+        fakes = self.pretrained_net(x=fakes,
+                                    time=time,
+                                    cond=cond_fakes,
+                                    time_cond=time_cond_fakes)
+
+        losses = self.discriminator.loss(reals,
+                                         fakes,
+                                         cond_reals=cond_reals,
+                                         time_cond_reals=time_cond_reals,
+                                         cond_fakes=cond_fakes,
+                                         time_cond_fakes=time_cond_fakes)
         return losses

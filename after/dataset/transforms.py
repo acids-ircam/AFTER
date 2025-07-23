@@ -166,10 +166,10 @@ class PSTS(BaseTransform):
                                     p=1.0)
 
         self.silence_aug = TimeMask(
-            min_band_part=0.07,
-            max_band_part=0.15,
+            min_band_part=0.03,
+            max_band_part=0.05,
             fade=True,
-            p=1.0,
+            p=0.8,
         ) if random_silence else None
 
     def crossfade(self, chunk_a, chunk_b, fade_len):
@@ -221,10 +221,21 @@ class PSTS(BaseTransform):
         return output
 
     def __call__(self, audio):
+        time_dim = audio.shape[-1]
         audio = self.chunkwise_transform(audio)
         if self.silence_aug:
             audio = self.silence_aug(audio, sample_rate=self.sr)
             audio = self.silence_aug(audio, sample_rate=self.sr)
+            audio = self.silence_aug(audio, sample_rate=self.sr)
+            audio = self.silence_aug(audio, sample_rate=self.sr)
+            audio = self.silence_aug(audio, sample_rate=self.sr)
+            audio = self.silence_aug(audio, sample_rate=self.sr)
+
+        # Ensure output length matches input length
+        if len(audio) < time_dim:
+            audio = np.pad(audio, (0, time_dim - len(audio)), mode='constant')
+        elif len(audio) > time_dim:
+            audio = audio[..., :time_dim]
         return audio
 
 
@@ -408,7 +419,7 @@ class AudioDescriptors(BaseTransform):
             librosa.stft(y=y,
                          n_fft=self.n_fft,
                          hop_length=self.hop_length,
-                         center=False))
+                         center=True))
         # Compute all descriptors
 
         audio_length = y.shape[-1]
@@ -417,13 +428,21 @@ class AudioDescriptors(BaseTransform):
                                          hop_length=self.hop_length,
                                          n_fft=self.n_fft)
         #S_times = np.linspace(self.n_fft/2 / 44100, audio_length / self.sr - self.n_fft/2 / 44100, S.shape[-1])
-        Z_times = np.linspace(0, audio_length / self.sr, z_length)
 
         for descr in self.descriptors:
-            func = features_dict[descr]
-            feature_cur = func(S=S).squeeze()
-            feature_cur = np.interp(Z_times, S_times, feature_cur)
+            if descr in features_dict:
+                func = features_dict[descr]
+                feature_cur = func(S=S).squeeze()
+            elif descr == "rms":
+                feature_cur = librosa.feature.rms(S=S,
+                                                  frame_length=self.n_fft,
+                                                  hop_length=self.hop_length,
+                                                  center=True).squeeze()
+            if z_length is not None:
+                Z_times = np.linspace(0, audio_length / self.sr, z_length)
+                feature_cur = np.interp(Z_times, S_times, feature_cur)
             features[descr] = feature_cur
+
         return features
 
     def __call__(self, audio, z_length):
@@ -506,3 +525,192 @@ class BeatTrack(BaseTransform):
                                               sr=self.sr,
                                               zero_value=0.)
         return {"beat_clock": beat_clock, "downbeat_clock": downbeat_clock}
+
+
+def compute_librosa(y: np.ndarray,
+                    sr: int,
+                    descriptors: list = [None],
+                    mean: bool = False,
+                    resampler=None,
+                    hop: int = 512) -> dict:
+    """
+    Compute all descriptors inside the Librosa library
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input audio signal (samples)
+    sr : int
+        Input sample rate
+    mean : bool, optional
+        [TODO] : Compute the mean of descriptors
+
+    Returns
+    -------
+    dict
+        Dictionnary containing all features.
+
+    """
+    # Features to compute
+    features_dict = {
+        "rolloff": librosa.feature.spectral_rolloff,
+        "bandwidth": librosa.feature.spectral_bandwidth,
+        "centroid": librosa.feature.spectral_centroid
+    }
+    # Results dict
+    features = {}
+    # Temporal features
+    if "zcr" in descriptors:
+        features["zcr"] = librosa.feature.zero_crossing_rate(y, center=False)
+    if "f0" in descriptors:
+        features["f0"] = librosa.yin(y, fmin=50, fmax=5000,
+                                     sr=sr)[np.newaxis, :]
+    if "flatness" in descriptors:
+        features["flatness"] = librosa.feature.spectral_flatness(
+            y=y, n_fft=2048, hop_length=512, center=False)
+    # Spectral features
+    S, phase = librosa.magphase(
+        librosa.stft(y=y, n_fft=hop * 4, hop_length=hop, center=False))
+    # Compute all descriptors
+
+    if "rms" in descriptors:
+        features["rms"] = librosa.feature.rms(S=S,
+                                              frame_length=hop * 4,
+                                              hop_length=hop,
+                                              center=False)
+
+    print(features["rms"].shape, "rms")
+
+    for name, func in features_dict.items():
+        if name in descriptors:
+            # features[name] = func(y=y,
+            #                       sr=sr,
+            #                       n_fft=2048,
+            #                       hop_length=512,
+            #                       center=False)
+
+            features[name] = func(S=S)
+            print(features[name].shape, name)
+    exit()
+    return features
+
+
+import pretty_midi
+import numpy as np
+
+
+def midi_to_monophonic(pm: pretty_midi.PrettyMIDI,
+                       hop_time=0.01,
+                       pitch_select='velocity') -> pretty_midi.PrettyMIDI:
+    """
+    Convert a PrettyMIDI object to monophonic by selecting the most dominant
+    pitch at each time step (e.g., 10ms), and merging consecutive identical pitches.
+
+    Args:
+        pm: pretty_midi.PrettyMIDI input
+        hop_time: time resolution (in seconds)
+        pitch_select: 'velocity' or 'highest' (selection strategy)
+
+    Returns:
+        Monophonic PrettyMIDI object
+    """
+    end_time = pm.get_end_time()
+    times = np.arange(0, end_time, hop_time)
+
+    # Build list of active notes at each time step
+    dominant_pitches = []
+    for t in times:
+        active = []
+        for inst in pm.instruments:
+            if inst.is_drum:
+                continue
+            for note in inst.notes:
+                if note.start <= t < note.end:
+                    active.append(note)
+
+        if active:
+            if pitch_select == 'velocity':
+                selected = max(active, key=lambda n: n.velocity)
+            elif pitch_select == 'highest':
+                selected = max(active, key=lambda n: n.pitch)
+            else:
+                raise ValueError(
+                    "pitch_select must be 'velocity' or 'highest'")
+            dominant_pitches.append((t, selected.pitch, selected.velocity))
+        else:
+            dominant_pitches.append((t, None, 0))
+
+    # Collapse consecutive same pitches into sustained notes
+    notes = []
+    current_pitch = None
+    current_start = None
+    current_vel = None
+
+    for i, (t, pitch, vel) in enumerate(dominant_pitches):
+        if pitch != current_pitch:
+            if current_pitch is not None:
+                end_time = times[i]
+                note = pretty_midi.Note(velocity=current_vel,
+                                        pitch=current_pitch,
+                                        start=current_start,
+                                        end=end_time)
+                notes.append(note)
+            if pitch is not None:
+                current_pitch = pitch
+                current_start = t
+                current_vel = vel
+            else:
+                current_pitch = None
+                current_start = None
+                current_vel = None
+
+    # Catch final note
+    if current_pitch is not None:
+        note = pretty_midi.Note(velocity=current_vel,
+                                pitch=current_pitch,
+                                start=current_start,
+                                end=times[-1] + hop_time)
+        notes.append(note)
+
+    # Build new monophonic MIDI
+    mono_pm = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(program=0, name='Monophonic')
+    inst.notes = notes
+    mono_pm.instruments.append(inst)
+    return mono_pm
+
+
+def is_monophonic_midi(pm, margin=0.05, velocity_threshold=20):
+    """
+    Check if a PrettyMIDI object is monophonic.
+
+    Args:
+        pm (pretty_midi.PrettyMIDI): Loaded MIDI file.
+        margin (float): Allowed overlap (in seconds) between notes.
+        velocity_threshold (int): Minimum velocity to consider a note active.
+
+    Returns:
+        bool: True if monophonic (with margin), False otherwise.
+    """
+    for instrument in pm.instruments:
+        if instrument.is_drum:
+            continue  # skip drums
+
+        # Filter out low-velocity notes
+        notes = [
+            note for note in instrument.notes
+            if note.velocity >= velocity_threshold
+        ]
+
+        # Sort notes by start time
+        notes.sort(key=lambda n: n.start)
+
+        for i in range(len(notes) - 1):
+            current = notes[i]
+            next_note = notes[i + 1]
+
+            # If the next note starts before the current one ends (minus margin), it's overlapping
+            if next_note.start < current.end - margin:
+                return False
+
+    return True

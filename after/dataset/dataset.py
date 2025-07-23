@@ -4,6 +4,8 @@ from .audio_example import AudioExample
 from random import random
 from tqdm import tqdm
 import numpy as np
+import os
+import json
 
 
 class SimpleDataset(torch.utils.data.Dataset):
@@ -19,6 +21,11 @@ class SimpleDataset(torch.utils.data.Dataset):
         validation_size=0.02,
         split=None,
         readonly=True,
+        filter={
+            "include": [],
+            "exclude": []
+        },
+        try_load_indices=True,
     ) -> None:
         super().__init__()
         self.num_sequential = num_sequential
@@ -36,6 +43,18 @@ class SimpleDataset(torch.utils.data.Dataset):
 
         with self.env.begin() as txn:
             self.keys = list(txn.cursor().iternext(values=False))
+
+        if try_load_indices:
+            try:
+                indices_file = os.path.join(path, "balanced_indices.json")
+                with open(indices_file, "r") as f:
+                    balanced_indices = json.load(f)
+                print("retaining ", len(balanced_indices),
+                      " balanced indices from file: ", indices_file,
+                      "from original :", len(self.keys))
+                self.keys = [self.keys[i] for i in balanced_indices]
+            except:
+                print("could not load balanced indices from file")
 
         if split in ["train", "validation"]:
             train_ids, valid_ids = train_test_split(list(range(len(
@@ -55,6 +74,35 @@ class SimpleDataset(torch.utils.data.Dataset):
                                          replace=False)
         else:
             self.max_samples = None
+
+        if len(filter["include"]) > 0 or len(filter["exclude"]) > 0:
+            keys_retained = []
+            for k in tqdm(self.keys):
+                with self.env.begin():
+                    ae = AudioExample(self.env.begin().get(k))
+                metadata = ae.get_metadata()
+                path = metadata.get("path", None)
+
+                if len(filter["include"]) > 0:
+                    test = any([
+                        incl.lower() in path.lower()
+                        for incl in filter["include"]
+                    ])
+                else:
+                    test = True
+
+                if len(filter["exclude"]) > 0:
+                    test = test and not any([
+                        excl.lower() in path.lower()
+                        for excl in filter["exclude"]
+                    ])
+                if test:
+                    keys_retained.append(k)
+                # else:
+                #     print("Removed key: ", k, " with path: ", path)
+            print(len(keys_retained), " keys retained after filtering of ",
+                  len(self.keys), " total keys")
+            self.keys = keys_retained
 
         self.indexes = list(range(len(self.keys)))
         self.cached = False
@@ -143,6 +191,10 @@ class CombinedDataset(torch.utils.data.Dataset):
                  num_samples=None,
                  freqs=None,
                  init_cache=False,
+                 filter={
+                     "include": [],
+                     "exclude": []
+                 },
                  **kwargs):
         super().__init__()
         self.config = config
@@ -158,7 +210,8 @@ class CombinedDataset(torch.utils.data.Dataset):
                               keys=keys,
                               max_samples=num_samples,
                               init_cache=init_cache,
-                              split=config)
+                              split=config,
+                              filter=filter)
                 for k, v in path_dict.items()
             }
             info_dict = path_dict

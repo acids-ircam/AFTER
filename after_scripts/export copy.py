@@ -106,10 +106,8 @@ def main(argv):
 
         try:
             path_dict = gin.query_parameter("utils.get_datasets.path_dict")
-            filter =  gin.query_parameter("utils.get_datasets.filter")
             dataset = CombinedDataset(path_dict=path_dict,
-                                      keys=["z", "metadata"],
-                                      filter = filter)
+                                      keys=["z", "metadata"])
 
             embeddings, labels = prepare_training(blender.encoder,
                                                   dataset,
@@ -432,10 +430,9 @@ def main(argv):
 
         @torch.jit.export
         def structure(self, x) -> torch.Tensor:
-            n = x.shape[0]
-            x = self.emb_model_structure.encode(x[:1])
-            x = self.encoder_time.forward_stream(x).repeat(n, 1, 1)
-
+            x = self.emb_model_structure.encode(x)
+            x = self.encoder_time.forward(x)
+            
             return x
 
         @torch.jit.export
@@ -472,9 +469,8 @@ def main(argv):
 
         @torch.jit.export
         def decode(self, x: torch.Tensor) -> torch.Tensor:
-            n = x.shape[0]
-            audio = self.emb_model_structure.decode(x[:1])
-            return audio.repeat(n, 1, 1)
+            audio = self.emb_model_structure.decode(x)
+            return audio
 
         @torch.jit.export
         def generate(self, x: torch.Tensor) -> torch.Tensor:

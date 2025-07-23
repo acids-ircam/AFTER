@@ -175,20 +175,48 @@ class Base(nn.Module):
             }
 
             torch.save(d, model_dir + "/checkpoint" + str(self.step) + ".pt")
-            
-    def sample_pdisc(self, num_samples, mu=0.0, sigma=1.0):
+
+    def sample_pdisc(self, num_samples, mu=0.0, sigma=1.0, shift=0.):
         """
         Samples from the shifted logit-normal distribution.
         Returns values in (0, 1).
         """
         normal = torch.randn(num_samples) * sigma + mu
-        s = torch.sigmoid(normal)
+        s = torch.sigmoid(normal + shift)
         return s
 
-    def sample_pgen(self, num_samples, max_logsnr=2, min_logsnr = -5):
-        t = 1-torch.sigmoid(-(torch.rand(num_samples) * (max_logsnr - min_logsnr) + min_logsnr))
+    def sample_pgen(self, num_samples, max_logsnr=2, min_logsnr=-5):
+        t = 1 - torch.sigmoid(-(torch.rand(num_samples) *
+                                (max_logsnr - min_logsnr) + min_logsnr))
         return t
 
+    import torch
+
+    def swap_conditions(self, time_cond, cond):
+        B = time_cond.size(0)
+        indices = torch.randperm(B)
+
+        # Divide into 3 approximately equal parts
+        split1 = B // 3
+        split2 = 2 * B // 3
+
+        idx_aligned = indices[:split1]
+        idx_swap_time = indices[split1:split2]
+        idx_swap_cond = indices[split2:]
+
+        # Clone to avoid in-place ops
+        time_cond_swap = time_cond.clone()
+        cond_swap = cond.clone()
+
+        # Swap time_cond only
+        time_perm = torch.randperm(len(idx_swap_time))
+        time_cond_swap[idx_swap_time] = time_cond[idx_swap_time[time_perm]]
+
+        # Swap cond only
+        cond_perm = torch.randperm(len(idx_swap_cond))
+        cond_swap[idx_swap_cond] = cond[idx_swap_cond[cond_perm]]
+
+        return time_cond_swap, cond_swap, idx_aligned, idx_swap_time, idx_swap_cond
 
     @gin.configurable
     def fit(self,
@@ -225,9 +253,10 @@ class Base(nn.Module):
             load_encoders=[True, True, True],
             zsem_noise_aug=0.,
             time_cond_noise_aug=0.,
-            distill_step = None,
-            discriminator_pretrained_class = None,
-            discriminator_head_class = None):
+            distill_step=None,
+            distill_transfer_step=None,
+            discriminator_pretrained_class=None,
+            discriminator_head_class=None):
 
         self.train_encoder = train_encoder
         self.train_encoder_time = train_encoder_time
@@ -278,7 +307,7 @@ class Base(nn.Module):
             n_epochs = n_epochs - restart_step // len(dataloader)
         losses_sum = {}
         losses_sum_count = {}
-        
+
         distill_init = False
 
         with open(os.path.join(model_dir, "config.gin"), "w") as config_out:
@@ -358,67 +387,108 @@ class Base(nn.Module):
                         drop_rate=self.drop_rate)
 
                 # Adversarial step
-                
-                if distill_step is not None and self.step>distill_step:
+
+                if distill_step is not None and self.step > distill_step:
+                    cond = cond.detach()
+                    time_cond = time_cond.detach()
+
+                    if self.step > distill_transfer_step:
+                        time_cond_swap, cond_swap, idx_aligned, idx_swap_time, idx_swap_cond = self.swap_conditions(
+                            time_cond, cond)
+                    else:
+                        time_cond_swap = time_cond
+                        cond_swap = cond
+
                     if distill_init is False:
-                        
+
                         print("Initialisation of one-step refinement")
-                        
+
                         discriminator_head = discriminator_head_class()
-                        discriminator_pretrained = discriminator_pretrained_class()
-                        discriminator_pretrained.load_state_dict(self.net.state_dict(), strict = False)
-                        
-                        self.discriminator = LatentDiscriminator(discriminator_head = discriminator_head, pretrained_net = discriminator_pretrained)
-                        self.discriminator_opt = AdamW(params, lr=lr, betas=(0.9, 0.999))
+                        discriminator_pretrained = discriminator_pretrained_class(
+                        )
+                        discriminator_pretrained.load_state_dict(
+                            self.net.state_dict(), strict=False)
+
+                        self.discriminator = LatentDiscriminator(
+                            discriminator_head=discriminator_head,
+                            pretrained_net=discriminator_pretrained).to(
+                                self.device)
+                        self.discriminator_opt = AdamW(
+                            self.discriminator.parameters(),
+                            lr=lr,
+                            betas=(0.9, 0.999))
                         distill_init = True
-                    
-                        
-                        
-                    # Make a onestep generation 
+
+                        with open(os.path.join(model_dir, "config.gin"),
+                                  "w") as config_out:
+                            config_out.write(gin.operative_config_str())
+
+                    # Make a onestep generation
                     x0 = torch.randn_like(x1)
                     # t = torch.rand(x0.size(0), 1, 1).to(self.device)
-                    t = self.sample_pgen(x0.size(0)).reshape(-1,1,1).to(self.device)
-                    
+                    t = self.sample_pgen(x0.size(0)).reshape(-1, 1,
+                                                             1).to(self.device)
+
                     interpolant = (1 - t) * x0 + t * x1
                     model_output = self.net(interpolant,
-                                time_cond=time_cond,
-                                cond=cond,
-                                time=t)
-                    
+                                            time_cond=time_cond_swap,
+                                            cond=cond_swap,
+                                            time=t)
+
                     x_onestep = interpolant + (1 - t) * model_output
-            
-    
+
                     # Renoise before passing to discriminator
                     # t_renoise = torch.rand(x0.size(0), 1, 1).to(self.device)
-                    t_renoise = self.sample_pdisc(x0.size(0)).reshape(-1,1,1).to(self.device)
-                    
+                    t_renoise = self.sample_pdisc(x0.size(0)).reshape(
+                        -1, 1, 1).to(self.device)
+
                     x0_renoise = torch.randn_like(x1)
-                    x_onestep_renoised = (1 - t_renoise) * x0_renoise + t_renoise * x_onestep
-                    
+                    x_onestep_renoised = (
+                        1 - t_renoise) * x0_renoise + t_renoise * x_onestep
+
                     x0_renoise_x1 = torch.randn_like(x1)
-                    x1_renoise = (1 - t_renoise) * x0_renoise_x1 + t_renoise * x1
-                    
-                    losses = self.discriminator.loss(reals=x1_renoise,fakes = x_onestep_renoised,  time = t_renoise, cond_reals=cond, time_cond_reals=time_cond,cond_fakes=cond, time_cond_fakes=time_cond)
-                    loss_dis = losses["loss_dis"]
-                    loss_adv = losses["loss_adv"]
-                        
-                    if not self.step%2:
-                        self.opt.zero_grad()
+                    x1_renoise = (1 -
+                                  t_renoise) * x0_renoise_x1 + t_renoise * x1
+
+                    losses = self.discriminator.loss(
+                        reals=x1_renoise,
+                        fakes=x_onestep_renoised,
+                        time=t_renoise,
+                        cond_reals=cond,
+                        time_cond_reals=time_cond,
+                        cond_fakes=cond_swap,
+                        time_cond_fakes=time_cond_swap)
+
+                    loss_dis = losses["loss_dis"].mean()
+                    loss_adv = losses["loss_adv"].mean()
+
+                    if not self.step % 2:
+                        self.discriminator_opt.zero_grad()
                         loss_dis.backward()
                         # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 10.0)
-                        self.opt.step()
-                        
+                        self.discriminator_opt.step()
+
                     else:
                         self.opt.zero_grad()
                         loss_adv.backward()
                         # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 10.0)
                         self.opt.step()
-                
+
                     lossdict = {
                         "Distill/loss_dis": loss_dis.item(),
                         "Distill/loss_adv": loss_adv.item(),
                     }
-                
+
+                    if self.step > distill_transfer_step:
+                        lossdict.update({
+                            "Distill/loss_dis_aligned":
+                            losses["loss_dis"][idx_aligned].mean().item(),
+                            "Distill/loss_dis_swap_time":
+                            losses["loss_dis"][idx_swap_time].mean().item(),
+                            "Distill/loss_dis_swap_cond":
+                            losses["loss_dis"][idx_swap_cond].mean().item(),
+                        })
+
                 elif self.step > timbre_warmup and not (
                         self.step % update_classifier_every
                         == 0) and self.classifier is not None:
@@ -471,7 +541,7 @@ class Base(nn.Module):
 
                     if cycle_consistency and self.step > cycle_start_step:
                         cond_cycle_loss, time_cond_cycle_loss = self.cycle_step(
-                            interpolant, t, time_cond, cond, cycle_mode,
+                            x1, t, time_cond, cond, cycle_mode,
                             cycle_swap_target, cycle_loss_type, cycle_scaling)
 
                     else:
@@ -526,8 +596,9 @@ class Base(nn.Module):
                     losses_sum_count[k] = losses_sum_count.get(k, 0) + 1
 
                 if self.step % steps_display == 0:
-                    self.tepoch.set_postfix(loss=losses_sum["Diffusion loss"] /
-                                            steps_display)
+                    self.tepoch.set_postfix(
+                        loss=losses_sum.get("Diffusion loss", 0.) /
+                        steps_display)
                     for k in losses_sum:
                         logger.add_scalar('Loss/' + k,
                                           losses_sum[k] /
@@ -604,42 +675,50 @@ class Base(nn.Module):
                         audio_true = self.emb_model.decode(x1.cpu()).cpu()
 
                         # for nb_steps in [5, 40]:
-                        x1_rec = self.sample(x0,
-                                             nb_steps=20,
-                                             time_cond=time_cond,
-                                             cond=cond)
 
-                        audio_rec = self.emb_model.decode(x1_rec.cpu()).cpu()
+                        nb_steps = [20] + ([1] if distill_init else [])
 
-                        # SAMPLING TRANSFERS
-                        shifted_cond = torch.roll(cond, shifts=-1, dims=0)
-                        x1_transfer = self.sample(x0,
-                                                  nb_steps=20,
-                                                  time_cond=time_cond,
-                                                  cond=shifted_cond)
+                        for nb_step in nb_steps:
+                            x1_rec = self.sample(x0,
+                                                 nb_steps=nb_step,
+                                                 time_cond=time_cond,
+                                                 cond=cond)
 
-                        audio_transfer = self.emb_model.decode(
-                            x1_transfer.cpu()).cpu()
+                            audio_rec = self.emb_model.decode(
+                                x1_rec.cpu()).cpu()
 
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            for i in range(x1.shape[0]):
-                                logger.add_audio("true/" + str(i),
-                                                 audio_true[i],
-                                                 global_step=self.step,
-                                                 sample_rate=self.sr)
+                            # SAMPLING TRANSFERS
+                            shifted_cond = torch.roll(cond, shifts=-1, dims=0)
+                            x1_transfer = self.sample(x0,
+                                                      nb_steps=nb_step,
+                                                      time_cond=time_cond,
+                                                      cond=shifted_cond)
 
-                                logger.add_audio("reconstruction/" + str(i),
-                                                 audio_rec[i],
-                                                 global_step=self.step,
-                                                 sample_rate=self.sr)
+                            audio_transfer = self.emb_model.decode(
+                                x1_transfer.cpu()).cpu()
 
-                                logger.add_audio("transfer/" + str(i) +
-                                                 "_to_" + str(
-                                                     (i + 1) % x1.shape[0]),
-                                                 audio_transfer[i],
-                                                 global_step=self.step,
-                                                 sample_rate=self.sr)
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore")
+                                for i in range(x1.shape[0]):
+                                    logger.add_audio("true/" + str(i),
+                                                     audio_true[i],
+                                                     global_step=self.step,
+                                                     sample_rate=self.sr)
+
+                                    logger.add_audio("reconstruction_" +
+                                                     str(nb_step) + "steps/" +
+                                                     str(i),
+                                                     audio_rec[i],
+                                                     global_step=self.step,
+                                                     sample_rate=self.sr)
+
+                                    logger.add_audio(
+                                        "transfer_" + str(nb_step) + "steps/" +
+                                        str(i) + "_to_" + str(
+                                            (i + 1) % x1.shape[0]),
+                                        audio_transfer[i],
+                                        global_step=self.step,
+                                        sample_rate=self.sr)
 
                 if self.step % steps_save == 0:
                     self.save_model(model_dir)
@@ -657,7 +736,7 @@ class RectifiedFlow(Base):
         return 0.5 * (1 + torch.tanh(slope * (0.4 - x)))
 
     def cycle_step(self,
-                   interpolant,
+                   x,
                    t,
                    time_cond,
                    cond,
@@ -683,21 +762,28 @@ class RectifiedFlow(Base):
             cond_target = cond.clone()
             cond_target[indices[n // 2:]] = cond[indices[:n // 2]]
 
-        time_cond_target = time_cond_target.detach()
-        cond_target = cond_target.detach()
+        time_cond_target = time_cond_target
+        cond_target = cond_target
 
         if cycle_mode == "interpolant":
+            x0 = torch.randn_like(x)
+            t = self.sample_pdisc(x.size(0), mu=0.0, sigma=1.0,
+                                  shift=-1.25).reshape(-1, 1, 1).to(x)
+
+            interpolant = (1 - t) * x0 + t * x
+
             model_output_transfer = self.net(interpolant,
                                              time=t,
                                              time_cond=time_cond_target,
                                              cond=cond_target)
+
             x_transfer = interpolant + (1 - t) * model_output_transfer
 
             cond_rec = self.encoder(x_transfer)
             time_cond_rec = self.encoder_time(x_transfer)
 
         elif cycle_mode == "sample":
-            x0 = torch.randn_like(interpolant)
+            x0 = torch.randn_like(x)
             with torch.no_grad():
                 x_transfer_onestep = self.sample(x0,
                                                  cond_target,
@@ -853,6 +939,7 @@ class RectifiedFlow(Base):
         x = x0.to(self.device)
 
         for t in t_values:
+
             t = t.reshape(1, 1, 1).repeat(x.shape[0], 1, 1)
             x = x + self.model_forward(
                 x=x,
