@@ -8,6 +8,7 @@ import numpy as np
 import after
 from after.dataset import SimpleDataset, CombinedDataset
 from after.diffusion.utils import collate_fn, get_datasets
+from after.diffusion.model import Base
 from after.autoencoder import M2LWrapper
 from tqdm import tqdm
 
@@ -23,8 +24,8 @@ flags.DEFINE_multi_string("config", [], "List of config files.")
 flags.DEFINE_string("model", "rectified", "Model type.")
 
 # Training
-flags.DEFINE_integer("bsize", 32, "Batch size.")
-flags.DEFINE_integer("n_signal", 64,
+flags.DEFINE_integer("bsize", 64, "Batch size.")
+flags.DEFINE_integer("n_signal", 32,
                      "Training length in number of latent steps")
 
 # DATASET
@@ -41,10 +42,15 @@ flags.DEFINE_integer("max_samples", None, "Maximum number of samples.")
 flags.DEFINE_integer("num_workers", 0, "Number of workers.")
 flags.DEFINE_multi_string("augmentation_keys", ["all"],
                           "List of augmentation keys.")
+flags.DEFINE_multi_string("augmentation_keys_exclude", ["stacked"],
+                          "List of augmentation keys.")
 flags.DEFINE_multi_string("filter_include", [],
                           "Keyword to include based on file path")
 flags.DEFINE_multi_string("filter_exclude", [],
                           "Keyword to exclude based on file path")
+flags.DEFINE_float("adv", None, "Adversarial strengh")
+flags.DEFINE_integer("zs", None, "Adversarial strengh")
+flags.DEFINE_integer("zt", None, "Adversarial strengh")
 
 flags.DEFINE_bool("use_validation", True, "Use a train/validation split")
 
@@ -91,6 +97,19 @@ def main(argv):
         if gin.query_parameter("%N_SIGNAL") is None:
             print("setting n_signal with FLAGS")
             gin.bind_parameter("%N_SIGNAL", FLAGS.n_signal)
+            
+        if FLAGS.adv is not None:
+            print("changing adversarial to", FLAGS.adv)
+            gin.bind_parameter("%ADV_WEIGHT", FLAGS.adv) 
+            
+        if FLAGS.zs is not None:
+            print("changing zs to", FLAGS.zs)
+            gin.bind_parameter("%ZS_CHANNELS", FLAGS.zs) 
+   
+            
+        if FLAGS.zt is not None:
+            print("changing zt to", FLAGS.zt)
+            gin.bind_parameter("%ZT_CHANNELS", FLAGS.zt) 
 
     if FLAGS.model == "rectified":
         from after.diffusion import RectifiedFlow
@@ -119,7 +138,7 @@ def main(argv):
         dataset = SimpleDataset(path=FLAGS.db_path[0])
         allkeys = dataset.get_keys()
         augmentation_keys = [
-            k for k in allkeys if "augment" in k or "aug" in k
+            k for k in allkeys if ("augment" in k or "aug" in k) and not(any([excl in k for excl in FLAGS.augmentation_keys_exclude]))
         ]
 
     if augmentation_keys is not None:

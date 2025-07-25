@@ -54,8 +54,8 @@ class V2ConvBlock1D(nn.Module):
             self.gn1 = nn.BatchNorm1d(in_c)
             self.gn2 = nn.BatchNorm1d(out_c)
         elif norm_type == "group_norm":
-            self.gn1 = nn.GroupNorm(min(in_c, min(num_groups, in_c//4)), in_c)
-            self.gn2 = nn.GroupNorm(min(out_c, min(num_groups, out_c//4)), out_c)
+            self.gn1 = nn.GroupNorm(min(in_c, min(num_groups, max(1, in_c//4))), in_c)
+            self.gn2 = nn.GroupNorm(min(out_c, min(num_groups, max(1,out_c//4))), out_c)
         act = act
         self.dp = nn.Dropout(p=0.1)
 

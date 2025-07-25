@@ -9,11 +9,12 @@ IN_SIZE = None
 N_SIGNAL = None
 
 ZS_CHANNELS = 12
-ZT_CHANNELS = 6
+ZT_CHANNELS = 8
 SR = 44100
 STRUCTURE_TYPE = "audio"
-PHASE_1_STEP = 100000
+PHASE_1_STEP = 200000
 MAX_STEPS = 1000000
+ADV_WEIGHT = 0.05
 
 LOCAL_ATTENTION_SIZE = None
 ATTENTION_CHUNK_SIZE = None
@@ -43,7 +44,7 @@ encoder/diffusion.networks.ecapa_encoder.ECAPATDNN:
 
 encoder_time/diffusion.networks.Encoder1D:
     in_size = %IN_SIZE
-    channels = [128, 128, 256, 512, %ZS_CHANNELS]
+    channels = [128, 256, 256, 512, %ZS_CHANNELS]
     ratios = [1, 1, 1, 1]
     use_tanh = False
     average_out = False
@@ -58,7 +59,7 @@ encoder_time/diffusion.networks.Encoder1D:
 classifier/diffusion.networks.Encoder1D:
     in_size = %ZS_CHANNELS
     channels = [64, 64, 64, 64, %ZT_CHANNELS]
-    ratios = [1, 2, 2, 2, 1]
+    ratios = [2, 2, 2, 1, 1]
     use_tanh = False
     average_out = True
     upscale_out = False
@@ -88,7 +89,7 @@ diffusion.model.Base:
     classifier = @classifier/diffusion.networks.Encoder1D()
     time_transform = None
     drop_value = -4.
-    drop_rate = 0.2
+    drop_rate = 0.15
 
  
 diffusion.model.Base.fit: 
@@ -98,12 +99,12 @@ diffusion.model.Base.fit:
 
     ## Adversarial
     timbre_warmup = %PHASE_1_STEP
-    adversarial_warmup = 60000
+    adversarial_warmup = 10000
     stop_training_encoder_step = %PHASE_1_STEP
     stop_training_encoder_time_step = %MAX_STEPS
     update_classifier_every = 3
     adversarial_loss = "cosine"
-    adversarial_weight = 0.075      
+    adversarial_weight = %ADV_WEIGHT 
 
     drop_targets = [0,1]
 
@@ -119,7 +120,7 @@ diffusion.model.Base.fit:
     cycle_consistency = False
 
     ### DATA ###
-    shuffle_zsem = [1]
+    shuffle_zsem = [2]
 
     ## Log ## 
     steps_valid = 10000

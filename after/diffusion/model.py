@@ -257,6 +257,8 @@ class Base(nn.Module):
             distill_transfer_step=None,
             discriminator_pretrained_class=None,
             discriminator_head_class=None):
+        
+        print(adversarial_weight)
 
         self.train_encoder = train_encoder
         self.train_encoder_time = train_encoder_time

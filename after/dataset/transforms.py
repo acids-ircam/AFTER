@@ -40,7 +40,7 @@ class BasicPitchPytorch(BaseTransform):
         self.pt_model.to(device)
         self.device = device
 
-    @torch.no_grad
+    @torch.no_grad()
     def __call__(self, waveform, **kwargs):
         if type(waveform) != torch.Tensor:
             waveform = torch.from_numpy(waveform).to(self.device)
