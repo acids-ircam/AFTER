@@ -7,6 +7,7 @@ import os
 
 from after.autoencoder import AutoEncoder, Trainer
 from after.dataset import SimpleDataset, CombinedDataset, random_phase_mangle
+from after.utils import resolve_device
 from accelerate import Accelerator
 
 from absl import app, flags
@@ -26,7 +27,10 @@ flags.DEFINE_multi_string("config", [], "List of config files")
 flags.DEFINE_integer("restart", None, "Restart step")
 flags.DEFINE_integer("bsize", 6, "Batch size")
 flags.DEFINE_integer("num_signal", 131072, "Number of signals")
-flags.DEFINE_integer("gpu", -1, "GPU ID")
+flags.DEFINE_integer("gpu", -1, "GPU ID (legacy; --device takes precedence).")
+flags.DEFINE_string("device", None,
+                    "Torch device: 'cpu', 'cuda', 'cuda:N', 'mps', or 'auto'. "
+                    "Overrides --gpu when set.")
 flags.DEFINE_integer("num_workers", 0, "Number of workers")
 flags.DEFINE_bool("use_cache", False, "Wether to load the dataset in cache")
 flags.DEFINE_bool("use_psts", False,
@@ -44,7 +48,7 @@ def main(argv):
     num_signal = FLAGS.num_signal
     step_restart = FLAGS.restart
 
-    device = "cuda:" + str(FLAGS.gpu) if FLAGS.gpu >= 0 else "cpu"
+    device = resolve_device(FLAGS.device, FLAGS.gpu)
 
     ## GIN CONFIG
     if FLAGS.restart is not None:

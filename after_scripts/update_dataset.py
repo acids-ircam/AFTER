@@ -3,6 +3,7 @@ import lmdb
 import torch
 import numpy as np
 from after.dataset import SimpleDataset, AudioExample
+from after.utils import resolve_device
 from tqdm import tqdm
 from absl import app, flags
 
@@ -20,10 +21,14 @@ flags.DEFINE_string('emb_model_path',
                     help='Autoencoder model path',
                     required=True)
 
-flags.DEFINE_integer('device',
+flags.DEFINE_integer('gpu',
                      default=-1,
-                     help='Device for embedding computation',
+                     help='Legacy CUDA gpu index for embedding computation. '
+                          '--device takes precedence when set.',
                      required=False)
+flags.DEFINE_string('device', None,
+                    "Torch device: 'cpu', 'cuda', 'cuda:N', 'mps', or 'auto'. "
+                    "Overrides --gpu when set.")
 
 flags.DEFINE_integer('batch_size',
                      32,
@@ -32,7 +37,7 @@ flags.DEFINE_integer('batch_size',
 
 
 def main(dummy):
-    device = "cuda:" + str(FLAGS.device) if FLAGS.device > -1 else "cpu"
+    device = resolve_device(FLAGS.device, FLAGS.gpu)
     emb_model = torch.jit.load(FLAGS.emb_model_path).to(device)
 
     bsize = FLAGS.batch_size

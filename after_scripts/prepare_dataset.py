@@ -6,6 +6,7 @@ import torch
 import numpy as np
 from after.dataset.audio_example import AudioExample
 from after.dataset.parsers import get_parser
+from after.utils import resolve_device
 import os
 from tqdm import tqdm
 from after.dataset.transforms import BasicPitchPytorch, PSTS, AudioDescriptors, BeatTrack
@@ -84,8 +85,12 @@ flags.DEFINE_string(
 flags.DEFINE_integer('batch_size', 8, help='Number of chunks', required=False)
 flags.DEFINE_integer('gpu',
                      "-1",
-                     help='Cuda gpu index. Use -1 for cpu',
+                     help='Legacy CUDA gpu index. Use -1 for cpu. '
+                          '--device takes precedence when set.',
                      required=False)
+flags.DEFINE_string('device', None,
+                    "Torch device: 'cpu', 'cuda', 'cuda:N', 'mps', or 'auto'. "
+                    "Overrides --gpu when set.")
 
 flags.DEFINE_multi_string(
     'ext',
@@ -157,8 +162,7 @@ def get_midi(midi_data, chunk_number):
 
 
 def main(dummy):
-    device = "cuda:" + str(
-        FLAGS.gpu) if torch.cuda.is_available() and FLAGS.gpu >= 0 else "cpu"
+    device = resolve_device(FLAGS.device, FLAGS.gpu)
     print("Using device : ", device)
     emb_model = None if FLAGS.emb_model_path is None else torch.jit.load(
         FLAGS.emb_model_path).to(device).eval()
