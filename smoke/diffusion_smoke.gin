@@ -1,0 +1,27 @@
+from __gin__ import dynamic_registration
+
+include 'tiny.gin'
+
+from after import diffusion
+
+# Cap the number of optimizer steps so the smoke run finishes in seconds.
+# Keep the various warmup boundaries above MAX_STEPS to avoid edge-cases
+# in the training loop that only matter at scale (e.g. enabling adversarial
+# / cycle losses).
+MAX_STEPS = 4
+PHASE_1_STEP = 1000
+
+diffusion.model.Base.fit:
+    max_steps = %MAX_STEPS
+    timbre_warmup = %PHASE_1_STEP
+    adversarial_warmup = %PHASE_1_STEP
+    stop_training_encoder_step = %PHASE_1_STEP
+    stop_training_encoder_time_step = %MAX_STEPS
+    steps_display = 1
+    # Push periodic side-effects past the smoke window so we don't burn
+    # time on validation/checkpointing — the diffusion fit loop walks the
+    # full dataloader regardless of MAX_STEPS, so these gates need to be
+    # comfortably above the per-epoch step count.
+    steps_valid = 100000
+    steps_save = 100000
+    regularisation_warmup = 1
