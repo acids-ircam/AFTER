@@ -1,9 +1,33 @@
+import os
 import torch
 import lmdb
 from .audio_example import AudioExample
 from random import random
 from tqdm import tqdm
 import numpy as np
+
+
+# python-lmdb refuses to reopen the same env in one process (this fires
+# on macOS when train + validation SimpleDataset instances are built from
+# the same path). Cache by realpath + readonly so the second open returns
+# the existing handle.
+_ENV_CACHE: dict = {}
+
+
+def _open_env(path, readonly=True):
+    key = (os.path.realpath(path), readonly)
+    env = _ENV_CACHE.get(key)
+    if env is None:
+        env = lmdb.open(
+            path,
+            lock=False,
+            readonly=readonly,
+            readahead=True,
+            map_async=False,
+            map_size=50 * 1024**3 if not readonly else None,
+        )
+        _ENV_CACHE[key] = env
+    return env
 
 
 class SimpleDataset(torch.utils.data.Dataset):
@@ -26,13 +50,7 @@ class SimpleDataset(torch.utils.data.Dataset):
         self.recache_every = recache_every
         self.recache_counter = 0
 
-        self.env = lmdb.open(path,
-                             lock=False,
-                             readonly=readonly,
-                             readahead=True,
-                             map_async=False,
-                             map_size=50 *
-                             1024**3 if readonly == False else None)
+        self.env = _open_env(path, readonly=readonly)
 
         with self.env.begin() as txn:
             self.keys = list(txn.cursor().iternext(values=False))
