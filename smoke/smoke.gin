@@ -1,0 +1,12 @@
+from __gin__ import dynamic_registration
+
+include 'baseAE.gin'
+
+from after import autoencoder
+
+MAX_STEPS = 200
+WARMUP_STEPS = 50
+REGULARISATION_WARMUP = 50
+
+autoencoder.trainer.Trainer.fit:
+    steps_display = 20

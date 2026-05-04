@@ -8,6 +8,7 @@ import numpy as np
 import after
 from after.dataset import SimpleDataset, CombinedDataset
 from after.diffusion.utils import collate_fn, get_datasets
+from after.utils import resolve_device
 from tqdm import tqdm
 
 from absl import flags, app
@@ -17,7 +18,10 @@ FLAGS = flags.FLAGS
 # MODEL
 flags.DEFINE_string("name", "test", "Name of the model.")
 flags.DEFINE_integer("restart", None, "Restart flag.")
-flags.DEFINE_integer("gpu", 0, "GPU ID to use.")
+flags.DEFINE_integer("gpu", 0, "GPU ID to use (legacy; --device takes precedence).")
+flags.DEFINE_string("device", None,
+                    "Torch device: 'cpu', 'cuda', 'cuda:N', 'mps', or 'auto'. "
+                    "Overrides --gpu when set.")
 flags.DEFINE_multi_string("config", [], "List of config files.")
 flags.DEFINE_string("model", "rectified", "Model type.")
 
@@ -64,7 +68,7 @@ def main(argv):
         with gin.unlock_config():
             gin.parse_config_files_and_bindings([config_path], [])
 
-    device = "cuda:" + str(FLAGS.gpu) if FLAGS.gpu >= 0 else "cpu"
+    device = resolve_device(FLAGS.device, FLAGS.gpu)
 
     ######### BUILD MODEL #########
 

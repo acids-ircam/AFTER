@@ -313,7 +313,13 @@ class Trainer(nn.Module):
                 if not self.step % steps_display and accelerator.is_main_process:
                     tepoch.set_postfix(loss=all_losses_sum["total_loss"] /
                                        steps_display)
-                    for k in all_losses_sum:
+                    for k in list(all_losses_sum):
+                        # A loss key may carry over from a previous window
+                        # without being touched in this one (e.g. a key
+                        # that's only emitted post-warmup). Skip its log
+                        # entry rather than dividing 0/0.
+                        if all_losses_count[k] == 0:
+                            continue
                         logger.add_scalar('Loss/' + k,
                                           all_losses_sum[k] /
                                           all_losses_count[k],
