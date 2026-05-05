@@ -15,7 +15,8 @@ runs/*
 __pycache__/
 *.py[cod]
 *$py.class
-
+export_onnx/*
+export_onnx_private/*
 # C extensions
 *.so
 
