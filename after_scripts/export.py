@@ -269,11 +269,22 @@ def main(argv):
             self.zt_channels = zt_channels
             self.ae_latents = ae_latents
             self.emb_model_structure = torch.jit.load(emb_model_path).eval()
+            self.audio_channels = getattr(
+                getattr(self.emb_model_structure, "model", None),
+                "audio_channels", 1)
+            audio_input_labels = [
+                f"(signal) Input audio structure {i + 1}"
+                for i in range(self.audio_channels)
+            ]
+            audio_output_labels = [
+                f"(signal) Audio output {i + 1}"
+                for i in range(self.audio_channels)
+            ]
             self.drop_value = blender.drop_value
             self.latent_range = FLAGS.latent_range
 
             # Get the ae ratio
-            dummy = torch.zeros(1, 1, 4 * 4096)
+            dummy = torch.zeros(1, self.audio_channels, 4 * 4096)
             z = self.emb_model_structure.encode(dummy)
             self.ae_ratio = 4 * 4096 // z.shape[-1]
 
@@ -300,13 +311,11 @@ def main(argv):
             ## METHODS ##
             self.register_method(
                 "structure",
-                in_channels=1,
+                in_channels=self.audio_channels,
                 in_ratio=1,
                 out_channels=self.zs_channels,
                 out_ratio=self.ae_ratio,
-                input_labels=[
-                    f"(signal) Input structure",
-                ],
+                input_labels=audio_input_labels,
                 output_labels=[
                     f"(signal) Output structure {i}"
                     for i in range(zs_channels)
@@ -365,11 +374,11 @@ def main(argv):
 
             self.register_method(
                 "diffuse_timbre",
-                in_channels=1 + zt_channels,
+                in_channels=self.audio_channels + zt_channels,
                 in_ratio=1,
                 out_channels=self.ae_latents,
                 out_ratio=self.ae_ratio,
-                input_labels=[f"(signal) Input audio structure"] + [
+                input_labels=audio_input_labels + [
                     f"(signal_{i}) Input timbre"
                     for i in range(self.zt_channels)
                 ],
@@ -382,11 +391,11 @@ def main(argv):
 
             self.register_method(
                 "diffuse_timbre_modulate",
-                in_channels=1 + zt_channels + zs_channels * 2,
+                in_channels=self.audio_channels + zt_channels + zs_channels * 2,
                 in_ratio=1,
                 out_channels=self.ae_latents,
                 out_ratio=self.ae_ratio,
-                input_labels=[f"(signal) Input audio structure"] + [
+                input_labels=audio_input_labels + [
                     f"(signal_{i}) Input timbre"
                     for i in range(self.zt_channels)
                 ] + [
@@ -404,43 +413,43 @@ def main(argv):
                 "generate",
                 in_channels=zt_channels + zs_channels,
                 in_ratio=self.ae_ratio,
-                out_channels=1,
+                out_channels=self.audio_channels,
                 out_ratio=1,
                 input_labels=[
                     f"(signal) Input structure {i}" for i in range(zs_channels)
                 ] + [f"(signal) Input timbre {i}" for i in range(zt_channels)],
-                output_labels=[f"(signal) Audio output"],
+                output_labels=audio_output_labels,
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
             self.register_method(
                 "generate_timbre",
-                in_channels=zt_channels + 1,
+                in_channels=zt_channels + self.audio_channels,
                 in_ratio=1,
-                out_channels=1,
+                out_channels=self.audio_channels,
                 out_ratio=1,
-                input_labels=[f"(signal) audio structure"] + [
+                input_labels=audio_input_labels + [
                     f"(signal_{i}) Input timbre"
                     for i in range(self.zt_channels)
                 ],
-                output_labels=[f"(signal) audio out"],
+                output_labels=audio_output_labels,
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
             self.register_method(
                 "generate_timbre_modulate",
-                in_channels=zt_channels + 1 + 2 * zs_channels,
+                in_channels=zt_channels + self.audio_channels + 2 * zs_channels,
                 in_ratio=1,
-                out_channels=1,
+                out_channels=self.audio_channels,
                 out_ratio=1,
-                input_labels=[f"(signal) audio structure"] + [
+                input_labels=audio_input_labels + [
                     f"(signal_{i}) Input timbre"
                     for i in range(self.zt_channels)
                 ] + [
                     f"(signal_{i}) Modulate structure"
                     for i in range(2 * self.zs_channels)
                 ],
-                output_labels=[f"(signal) audio out"],
+                output_labels=audio_output_labels,
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
@@ -448,13 +457,13 @@ def main(argv):
                 "decode",
                 in_channels=self.ae_latents,
                 in_ratio=self.ae_ratio,
-                out_channels=1,
+                out_channels=self.audio_channels,
                 out_ratio=1,
                 input_labels=[
                     f"(signal) Latent input {i}"
                     for i in range(self.ae_latents)
                 ],
-                output_labels=[f"(signal) Audio output"],
+                output_labels=audio_output_labels,
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
@@ -628,13 +637,15 @@ def main(argv):
         def diffuse_timbre_modulate(self, x: torch.Tensor) -> torch.Tensor:
 
             n = x.shape[0]
-            zsem = x[:, 1:1 + self.zt_channels].mean(-1)
+            timbre_start = self.audio_channels
+            timbre_end = timbre_start + self.zt_channels
+            zsem = x[:, timbre_start:timbre_end].mean(-1)
             zsem = zsem * self.latent_range
 
-            audio = x[:, :1, :]
+            audio = x[:, :self.audio_channels, :]
             time_cond = self.structure(audio)
 
-            modulators = x[:, 1 + self.zt_channels:, :]
+            modulators = x[:, timbre_end:, :]
 
             modulators = torch.nn.functional.interpolate(modulators,
                                                          scale_factor=1 /
@@ -652,10 +663,10 @@ def main(argv):
         def diffuse_timbre(self, x: torch.Tensor) -> torch.Tensor:
 
             n = x.shape[0]
-            zsem = x[:, 1:].mean(-1)
+            zsem = x[:, self.audio_channels:].mean(-1)
             zsem = zsem * self.latent_range
 
-            audio = x[:, :1, :]
+            audio = x[:, :self.audio_channels, :]
             time_cond = self.structure(audio)
 
             x = torch.randn(n, self.ae_latents, time_cond.shape[-1])
@@ -705,7 +716,8 @@ def main(argv):
     streamer = Streamer()
 
     # Some tests
-    dummmy = torch.randn(1, 1 + 2 * zs_channels + zt_channels, 8192)
+    dummmy = torch.randn(
+        1, streamer.audio_channels + 2 * zs_channels + zt_channels, 8192)
     out = streamer.diffuse_timbre_modulate(dummmy)
 
     dummmy = torch.randn(1, zs_channels + zt_channels, model_chunk_size)

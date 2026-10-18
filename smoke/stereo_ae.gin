@@ -1,0 +1,25 @@
+from __gin__ import dynamic_registration
+include 'AE_4096.gin'
+from after import autoencoder
+from after.autoencoder.networks import discriminators
+
+# Tiny network, three steps, including stereo adversarial training.
+CHANNELS = [8, 8, 8, 8, 8, 8, 8, 16]
+LATENT_SIZE = 8
+TIME_SIZE = 32768
+MAX_STEPS = 3
+WARMUP_STEPS = 0
+REGULARISATION_WARMUP = 1
+
+discriminators.SpectroDiscriminator:
+    n_ffts = [128, 512]
+    hop_lengths = [64, 256]
+    capacity = 2
+    channels = [1, 1, 2, 2, 2, 2]
+
+autoencoder.trainer.Trainer.update_discriminator_every = 2
+
+autoencoder.trainer.Trainer.fit:
+    steps_display = 1
+    steps_save = 1
+    steps_valid = 100000

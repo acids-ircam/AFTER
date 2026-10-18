@@ -287,9 +287,11 @@ class AutoEncoder2D(nn.Module):
 
         # Expose encoder/decoder as module lists (used by Trainer.init_opt)
         self.encoder = nn.ModuleList(
-            [self.down_layers, self.middle_block_encode, self.preconv])
+            [self.down_layers, self.middle_block_encode, self.preconv,
+             self.stereo_merge])
         self.decoder = nn.ModuleList(
-            [self.up_layers, self.middle_block_decode, self.outconv])
+            [self.up_layers, self.middle_block_decode, self.outconv,
+             self.stereo_split])
 
     def _encode_features(self, h):
         h = self.preconv(h)

@@ -383,9 +383,9 @@ def process_db(input_path, output_path, device, emb_model, z_length,
                                         sr=FLAGS.sample_rate,
                                         mono=not FLAGS.stereo)
                 audio = audio.astype(np.float32).reshape(-1, audio.shape[-1])
-                # If stereo mode but file is mono (1-D), duplicate to (2, T)
+                # Duplicate mono to (2, T) when storing stereo.
                 if FLAGS.stereo and audio.shape[0] == 1:
-                    audio = np.stack([audio, audio], axis=0)
+                    audio = np.repeat(audio, 2, axis=0)
 
             except Exception as e:
                 print(f"Load error {file}: {e}")

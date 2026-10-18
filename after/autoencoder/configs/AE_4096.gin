@@ -58,6 +58,7 @@ autoencoder.core.SpectralDistance:
     mel_bands = [64, 64, 64, 64, 64, 64, 64]
 
 discriminators.SpectroDiscriminator:
+    audio_channels = %AUDIO_CHANNELS
     n_ffts= [128 , 256, 512, 1024, 2048, 4096]
     hop_lengths=[64, 128, 256, 512, 1024, 2048]
     normalize_losses = True

@@ -34,8 +34,8 @@ pyyaml
 tensorboard
 matplotlib>=3.8.3
 
-# Custom / export
-cached-conv>=2.5.0
+# Custom / export (nn-tilde uses the cached-conv 2.x API)
+cached-conv>=2.5.0,<3
 nn-tilde
 packaging
 

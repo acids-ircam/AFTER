@@ -1,0 +1,37 @@
+from __gin__ import dynamic_registration
+include 'audio.gin'
+from after import diffusion
+
+# Five training entries / batch size two: two epochs of two updates.
+MAX_STEPS = 2
+PHASE_1_STEP = 1000
+ZS_CHANNELS = 2
+ZT_CHANNELS = 2
+
+encoder/diffusion.networks.ecapa_encoder.ECAPATDNN:
+    channels = [16, 16, 16, 32]
+    attention_channels = 8
+    se_channels = 8
+
+encoder_time/diffusion.networks.Encoder1D:
+    channels = [8, 8, 8, 8, %ZS_CHANNELS]
+
+classifier/diffusion.networks.Encoder1D:
+    channels = [8, 8, 8, 8, %ZT_CHANNELS]
+
+diffusion.networks.transformerv2.DenoiserV2:
+    embed_dim = 64
+    noise_embed_dims = 16
+    n_layers = 1
+    mlp_multiplier = 2
+    dropout = 0.0
+
+diffusion.model.Base.fit:
+    steps_display = 1
+    steps_save = 1
+    steps_valid = 100000
+    timbre_warmup = %PHASE_1_STEP
+    adversarial_warmup = %PHASE_1_STEP
+    stop_training_encoder_step = %PHASE_1_STEP
+    stop_training_encoder_time_step = %PHASE_1_STEP
+    regularisation_warmup = 1
