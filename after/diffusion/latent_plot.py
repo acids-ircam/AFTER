@@ -545,7 +545,7 @@ def generate_plot(embeddings,
     le = LabelEncoder()
     label_ids = le.fit_transform(labels)
     unique_labels = le.classes_
-    base_cmap = cm.get_cmap('tab10', len(unique_labels))
+    base_cmap = plt.get_cmap('tab10', len(unique_labels))
     # colors = [base_cmap(i)[:3] for i in range(len(unique_labels))]
 
     base_colors = [
