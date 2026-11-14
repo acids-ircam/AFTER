@@ -50,9 +50,11 @@ function create(model_name, buffer_size, prior)
 	max_codec_decoder.rect = [100, 600, 850, 25]
 	
 	// Number of latents
-	var n_latents = 8//(max_decoder.getboxattr('numinlets') - 2)/2
+	var n_latents = 8; // The device has eight pitch/velocity voice pairs.
+	var n_latents_timbre = Number(max_decoder.getboxattr('numinlets')) - 2 * n_latents;
+	var n_audio_channels = Number(max_codec_decoder.getboxattr('numoutlets'));
 	
-	var n_ae_latents  = max_decoder.getboxattr('numoutlets')
+	var n_ae_latents = Number(max_decoder.getboxattr('numoutlets'))
 
 	// Gather all 
 	cur_z = []
@@ -60,6 +62,21 @@ function create(model_name, buffer_size, prior)
 	// cur_decoder = max_decoder
 
 	cur_connect.push(max_decoder)
+	cur_connect.push(max_codec_decoder)
+	if ((n_audio_channels !== 1 && n_audio_channels !== 2) ||
+		n_latents_timbre < 1 || n_latents_timbre > 8 ||
+		Number(max_codec_decoder.getboxattr('numinlets')) !== n_ae_latents) {
+		post("[ERROR] Incompatible MIDI generator/decoder channel layout\n");
+		_delete_current();
+		return;
+	}
+	var rave_out_r = p.getnamed("rave_out_r");
+	var channel_mode = p.getnamed("audio_channels");
+	if (n_audio_channels === 2 && (!rave_out_r || !channel_mode)) {
+		post("[ERROR] This stereo model requires the updated MIDI device\n");
+		_delete_current();
+		return;
+	}
 
 	// Make major in / out connections
 	p.connect(p.getnamed("model_props"), 0, max_decoder, 0)
@@ -69,6 +86,9 @@ function create(model_name, buffer_size, prior)
 	
 	
 	p.connect(max_codec_decoder, 0, p.getnamed("rave_out"), 0)
+	// Legacy mono exports retain duplicated output; stereo keeps L/R separate.
+	if (rave_out_r)
+		p.connect(max_codec_decoder, n_audio_channels === 2 ? 1 : 0, rave_out_r, 0)
 
 	var router = p.getnamed("midi_router")
 	cur_prior = 0
@@ -107,12 +127,12 @@ function create(model_name, buffer_size, prior)
 	
 	//### TIMBRE CONTROL####
 	var timbre_recv = p.getnamed("timbre_receive")
-	var timbre_unp = p.newdefault(100 + (100 * z), 190, "mc.unpack~",8);
+	var timbre_unp = p.newdefault(100 + (100 * z), 190, "mc.unpack~",n_latents_timbre);
 	timbre_unp.rect = [100 + (100 * z), 190, 190 + (100 * z), 190]
 
 	p.connect(timbre_recv, 0,timbre_unp,  0)
 
-	for (var j = 0; j < 8; j++)
+	for (var j = 0; j < n_latents_timbre; j++)
 		{
 			p.connect(timbre_unp, j,max_decoder,  n_latents*2 + j)
 		}
@@ -134,7 +154,6 @@ function create(model_name, buffer_size, prior)
 		cur_z.push(cur_connect)
 		}
 		
-	cur_connect.push(max_codec_decoder);
 	
 
 	
@@ -154,17 +173,27 @@ function create(model_name, buffer_size, prior)
 
 	var max_m2l =  p.newdefault(2567, 1639, "nn~", model_name, "map2latent");
 	var max_l2m =  p.newdefault(3750, 2300, "nn~", model_name, "latent2map");
+	cur_connect.push(max_m2l);
+	cur_connect.push(max_l2m);
+	if (Number(max_m2l.getboxattr('numinlets')) !== 2 ||
+		Number(max_m2l.getboxattr('numoutlets')) !== n_latents_timbre ||
+		Number(max_l2m.getboxattr('numinlets')) !== n_latents_timbre ||
+		Number(max_l2m.getboxattr('numoutlets')) !== 2) {
+		post("[ERROR] Learned map dimensions do not match MIDI timbre inputs\n");
+		_delete_current();
+		return;
+	}
 
 
 	p.connect(sigm2l1, 0 ,max_m2l,  0);
 	p.connect(sigm2l2, 0 ,max_m2l,  1);
 
-	for (var j = 0; j < 8; j++)
+	for (var j = 0; j < n_latents_timbre; j++)
 	{
 		p.connect(max_m2l, j ,packm2l,  j)
 	}
 	
-	for (var j = 0; j < 8; j++)
+	for (var j = 0; j < n_latents_timbre; j++)
 		{
 			p.connect(unpackl2m, j ,max_l2m,  j)
 		}
@@ -172,9 +201,8 @@ function create(model_name, buffer_size, prior)
 		p.connect(max_l2m, 0, snapl2m1, 0)
 		p.connect(max_l2m, 1, snapl2m2, 0)
 
-	cur_connect.push(max_m2l);
-	cur_connect.push(max_l2m);
-
+	if (channel_mode)
+		channel_mode.message("int", n_audio_channels);
 	outlet(1, "create")
 	outlet(0, "bang")
 }
@@ -188,6 +216,9 @@ function delete()
 // delete current model
 function _delete_current()
 {	
+	var channel_mode = p.getnamed("audio_channels");
+	if (channel_mode)
+		channel_mode.message("int", 1);
 
 	for (var item in cur_connect){
 		p.remove(cur_connect[item])

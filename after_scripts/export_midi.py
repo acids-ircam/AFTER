@@ -294,15 +294,24 @@ def main(argv):
             self.zt_channels = zt_channels
             self.ae_latents = ae_latents
             self.emb_model_timbre = torch.jit.load(emb_model_path).eval()
+            self.audio_channels = getattr(
+                getattr(self.emb_model_timbre, "model", None),
+                "audio_channels", 1)
+            audio_output_labels = [
+                f"(signal) Audio output {i + 1}"
+                for i in range(self.audio_channels)
+            ]
 
             self.drop_value = blender.drop_value
 
             self.latent_range = FLAGS.latent_range
 
             # Get the ae ratio
-            dummy = torch.zeros(1, 1, 4 * 4096)
+            dummy = torch.zeros(1, self.audio_channels, 4 * 4096)
             z = self.emb_model_timbre.encode(dummy)
             self.ae_ratio = 4 * 4096 // z.shape[-1]
+
+            self.sr = gin.query_parameter("%SR")
 
             self.project_model = project_model
 
@@ -326,11 +335,11 @@ def main(argv):
                 "generate",
                 in_channels=self.n_poly * 2 + zt_channels,
                 in_ratio=1,  #self.ae_ratio // self.time_cond_ratio,
-                out_channels=1,
+                out_channels=self.audio_channels,
                 out_ratio=1,
                 input_labels=input_labels +
                 [f"(signal) Input timbre {i}" for i in range(zt_channels)],
-                output_labels=[f"(signal) Audio output"],
+                output_labels=audio_output_labels,
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
@@ -353,13 +362,13 @@ def main(argv):
                 "decode",
                 in_channels=self.ae_latents,
                 in_ratio=self.ae_ratio,
-                out_channels=1,
+                out_channels=self.audio_channels,
                 out_ratio=1,
                 input_labels=[
                     f"(signal) Latent input {i}"
                     for i in range(self.ae_latents)
                 ],
-                output_labels=[f"(signal) Audio output"],
+                output_labels=audio_output_labels,
                 test_buffer_size=self.chunk_size * self.ae_ratio,
             )
 
