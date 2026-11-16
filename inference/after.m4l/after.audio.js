@@ -90,10 +90,48 @@ function clear_warning_message() {
 }
 
 
+// Waveform channels come from nn~'s signal outlets, not from the number of
+// timbre/structure controls. The accompanying patch keeps independent L/R DSP.
+function audio_channels(model) {
+    var channels = Number(model.getboxattr("numoutlets"));
+    if (channels !== 1 && channels !== 2)
+        throw new Error("Expected a mono or stereo audio decoder");
+    return channels;
+}
+
+function set_audio_channels(channels) {
+    var mode = p.getnamed("audio_channels");
+    if (mode)
+        mode.message("int", channels);
+    else if (channels === 2)
+        throw new Error("Stereo model requires the updated AFTER audio device");
+}
+
+function connect_audio_inputs(model, channels) {
+    p.connect(p.getnamed("plug_in"), 0, model, 0);
+    if (channels === 2) {
+        var right = p.getnamed("plug_in_r");
+        if (!right)
+            throw new Error("Stereo model requires a right audio input");
+        p.connect(right, 0, model, 1);
+    }
+}
+
+function connect_audio_outputs(model, channels) {
+    p.connect(model, 0, p.getnamed("rave_out"), 0);
+    var right = p.getnamed("rave_out_r");
+    if (right)
+        p.connect(model, channels - 1, right, 0);
+    else if (channels === 2)
+        throw new Error("Stereo model requires a right audio output");
+    set_audio_channels(channels);
+}
+
 // Create a given model
 function create(model_name, buffer_size, prior) 
 
 {
+	try {
 	post("Received:", model_name, buffer_size, prior, "\n");
 
 	
@@ -124,7 +162,9 @@ function create(model_name, buffer_size, prior)
 	main_plot.setattr("bkgndpict", model_name + ".png")
 		
 	// ----------- IF / ELSE TEST -----------
-if (max_decoder && max_decoder.maxclass === "nn~") {
+if (max_decoder && max_decoder.maxclass === "nn~" &&
+    Number(max_decoder.getboxattr("numinlets")) > 0 &&
+    Number(max_decoder.getboxattr("numoutlets")) > 0) {
     post("[OK] External nn~ loaded successfully\n");
 	set_knobs_enabled(1);
 	clear_warning_message();
@@ -142,28 +182,33 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 	
 	// Number of latents
 	
+	var n_audio_channels = audio_channels(max_codec_decoder);
 	var n_latents_timbre = 6
 	var ninlets = max_decoder.getboxattr('numinlets')
 
-	var n_latents_structure = (max_decoder.getboxattr('numinlets') - n_latents_timbre - 1)/2
+	var n_latents_structure = (ninlets - n_latents_timbre - n_audio_channels)/2
 	
 	post("Hlatent structure",n_latents_structure);
 	post("Hlatent inlents",ninlets);
 
 	
-	var n_ae_latents  = max_decoder.getboxattr('numoutlets')
+	var n_ae_latents = Number(max_decoder.getboxattr('numoutlets'));
+    if (n_latents_structure < 0 || n_latents_structure !== Math.floor(n_latents_structure))
+        throw new Error("Audio model input layout does not match its decoder channels");
+    if (n_ae_latents !== Number(max_codec_decoder.getboxattr('numinlets')))
+        throw new Error("Generator and codec latent channels do not match");
 
 	// Gather all 
 	cur_z = []
 
 	
 	// Make major in / out connections
-	p.connect(p.getnamed("plug_in"), 0, max_decoder, 0)
+	connect_audio_inputs(max_decoder, n_audio_channels)
 	p.connect(p.getnamed("model_props"), 0, max_decoder, 0)
 	p.connect(p.getnamed("model_props"), 0, max_codec_decoder, 0)
 	//p.connect(p.getnamed("model_props"), 0, structure_encoder, 0)
 	p.connect(p.getnamed("msg_in"), 0, max_decoder, 0)
-	p.connect(max_codec_decoder, 0, p.getnamed("rave_out"), 0)
+	connect_audio_outputs(max_codec_decoder, n_audio_channels)
 	
 	// Create prior
 
@@ -182,8 +227,8 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 			var scale_mod = p.newdefault(250 + (100 * z), 190, "r~", ""+prefix_s+""+z+"_b");
 			scale_mod.rect = [250 + (100 * z), 190, 280 + (100 * z), 220]
 			
-			p.connect(bias_mod, 0, max_decoder, 1+ n_latents_timbre+ 2*z)
-			p.connect(scale_mod, 0, max_decoder, 1+ n_latents_timbre+ 2*z + 1)
+			p.connect(bias_mod, 0, max_decoder, n_audio_channels + n_latents_timbre + 2*z)
+			p.connect(scale_mod, 0, max_decoder, n_audio_channels + n_latents_timbre + 2*z + 1)
 			cur_connect.push(bias_mod)
 			cur_connect.push(scale_mod)
 			cur_z.push(cur_connect)
@@ -199,8 +244,8 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 		//sig_bias.message(0..)
 		sig_bias.rect = [250 + (100 * z), 190, 280 + (100 * z), 220]
 
-		p.connect(sig_scale, 0, max_decoder, 1 +n_latents_timbre+ 2*z);
-		p.connect(sig_bias, 0, max_decoder, 1 +n_latents_timbre+ 2*z+1);
+		p.connect(sig_scale, 0, max_decoder, n_audio_channels + n_latents_timbre + 2*z);
+		p.connect(sig_bias, 0, max_decoder, n_audio_channels + n_latents_timbre + 2*z+1);
 		cur_connect.push(sig_bias)
 		cur_connect.push(sig_scale)
 	}
@@ -216,15 +261,16 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 	set_warning_message("After>=v2.0.0 model required");
 
 	var max_decoder = p.newdefault(100, 350, "nn~", model_name,"generate_timbre", buffer_size);
+	cur_connect.push(max_decoder);
 	max_decoder.rect = [100, 350, 850, 25]
 	
-	var n_latents_timbre = max_decoder.getboxattr('numinlets') - 1
+	var n_audio_channels = audio_channels(max_decoder);
+	var n_latents_timbre = max_decoder.getboxattr('numinlets') - n_audio_channels
 	
 	
-	p.connect(p.getnamed("plug_in"), 0, max_decoder, 0)
+	connect_audio_inputs(max_decoder, n_audio_channels)
 	p.connect(p.getnamed("model_props"), 0, max_decoder, 0)
-	p.connect(max_decoder, 0, p.getnamed("rave_out"), 0)
-	cur_connect.push(max_decoder)
+	connect_audio_outputs(max_decoder, n_audio_channels)
 	
 	
 
@@ -239,6 +285,8 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 	
 	
 	//### TIMBRE CONTROL####
+    if (n_latents_timbre < 1 || n_latents_timbre > 8)
+        throw new Error("Audio model timbre width exceeds the device controls");
 	var timbre_recv = p.getnamed("timbre_receive")
 	var timbre_unp = p.newdefault(100, 190, "mc.unpack~",8);
 	timbre_unp.rect = [100, 190, 190, 190]
@@ -247,7 +295,7 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 
 	for (var j = 0; j < n_latents_timbre; j++)
 		{
-			p.connect(timbre_unp, j,max_decoder,  1 + j)
+			p.connect(timbre_unp, j,max_decoder, n_audio_channels + j)
 		}
 
 
@@ -289,15 +337,20 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 	var max_l2m =  p.newdefault(3750, 2300	, "nn~", model_name, "latent2map");
 
 
+	cur_connect.push(max_m2l);
+	cur_connect.push(max_l2m);
+    if (Number(max_m2l.getboxattr("numoutlets")) !== n_latents_timbre ||
+        Number(max_l2m.getboxattr("numinlets")) !== n_latents_timbre)
+        throw new Error("Learned map and model timbre dimensions do not match");
 	p.connect(sigm2l1, 0 ,max_m2l,  0);
 	p.connect(sigm2l2, 0 ,max_m2l,  1);
 
-	for (var j = 0; j < 8; j++)
+	for (var j = 0; j < n_latents_timbre; j++)
 	{
 		p.connect(max_m2l, j ,packm2l,  j)
 	}
 	
-	for (var j = 0; j < 8; j++)
+	for (var j = 0; j < n_latents_timbre; j++)
 		{
 			p.connect(unpackl2m, j ,max_l2m,  j)
 		}
@@ -305,17 +358,19 @@ if (max_decoder && max_decoder.maxclass === "nn~") {
 		p.connect(max_l2m, 0, snapl2m1, 0)
 		p.connect(max_l2m, 1, snapl2m2, 0)
 
-	cur_connect.push(max_m2l);
-	cur_connect.push(max_l2m);
-
 	outlet(1, "create")
 	outlet(0, "bang")
+    } catch (error) {
+        _delete_current();
+        set_knobs_enabled(0);
+        set_warning_message(String(error));
+        post("[ERROR] Could not wire AFTER audio model: " + error + "\n");
+    }
 }
 
 function delete()
 {
-	if (cur_z != 0)
-		_delete_current()
+	_delete_current()
 }
 
 // delete current model
@@ -324,6 +379,7 @@ function _delete_current()
 	
 	clear_warning_message();
 	set_knobs_enabled(1);
+	set_audio_channels(1);
 	
 	
 	for (var item in cur_connect){
@@ -338,6 +394,7 @@ function _delete_current()
 	main_plot.setattr("bkgndpict", "background_transparent.png")
 
 	cur_connect = []
+	cur_z = 0
 	// for (var t in cur_z)
 	// {
 	// 	var cur_c = cur_z[t]

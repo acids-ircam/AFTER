@@ -292,6 +292,31 @@ You can experiment with inference in MaxMSP using the patches in `./inference/` 
 
 We provide two Max4Live devices to use your models in Ableton Live. The export script trains a small network to remap the timbre latent space to a 2D map for latent exploration. If you use multiple datasets, each dataset will correspond to one color on the latent map. Make sure to download both the `.ts` file and the `.png` latent map created by the export script.
 
+### Mono and stereo models
+
+The bundled audio and MIDI Max4Live devices follow the exported codec's channel
+count. Stereo models keep independent left/right audio paths through the device;
+mono models retain their existing stereo-input average (audio device) and
+output duplication. The MIDI note and timbre controls are the same in both modes.
+
+For your own stereo models, use `--stereo` when preparing both waveform and
+latent datasets and when training the codec. Supply the corresponding streaming
+codec (`export_stream.ts`) to `after export` or `after export_midi`; both exporters
+preserve its audio channel count. Existing mono pretrained models remain mono.
+
+The export and routing regressions can be run without downloading pretrained
+models or starting a training run:
+
+```bash
+python smoke/midi_stereo_export.py
+node smoke/max_audio_stereo_test.js
+node smoke/max_midi_stereo_test.js
+```
+
+The Python check exports tiny random checkpoints with mono/stereo codec fixtures.
+The Node checks simulate Max's scripting API and inspect the saved device graphs;
+they do not replace a DSP check in Max or an Ableton Live audition.
+
 <p align="center">
   <img src="docs/after_midi.png" height="200" />
   <br/>
